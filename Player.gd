@@ -1,30 +1,31 @@
 extends Node3D
 ## The mower: a little character holding a scythe.
 ##
-## Assembled from many small boxes (boots, two legs, hips, torso, two arms,
-## neck, head with hair + eyes) for a finer, more humanoid silhouette than a few
-## chunky blocks. Moves top-down with WASD / arrows, turning to face the way it
-## walks, with a simple walk cycle (legs + free arm swing, slight body bob).
-## SPACE swings the scythe; on the press we emit `swing(origin, forward)` so the
-## GrassField can cut whatever is in the arc ahead. The character is clamped to
-## the real island outline (Main.island_radius).
+## Assembled from many small *beveled* boxes (boots, two legs, hips, torso, two
+## arms, neck, head with hair + eyes) for a soft, humanoid silhouette. Each part
+## gets a solid material with per-instance HSL + roughness variance so nothing
+## looks stamped. Moves top-down with WASD / arrows, turning to face travel,
+## with a walk cycle (legs + free arm swing, slight body bob). SPACE swings the
+## scythe — the holding arm drives it — and emits `swing(origin, forward)` so the
+## GrassField can cut the arc ahead. Clamped to the real island outline.
 ##
-## All visual parts hang under `_rig`; movement/turning happen on the root, so
-## the walk bob never moves the root origin the camera follows (no shake).
+## Visual parts hang under `_rig`; movement/turning happen on the root, so the
+## walk bob never moves the root origin the camera follows (no shake).
 
-const Art := preload("res://Main.gd")  # reuse texture/material helpers
+const Art := preload("res://Main.gd")  # reuse beveled box + colour-variance helpers
 
 signal swing(origin: Vector3, forward: Vector3)
 
 const SPEED := 6.0
 const TURN_SPEED := 12.0
-const EDGE_MARGIN := 0.7        # stay this far inside the coastline
+const EDGE_MARGIN := 0.7
+const BEVEL := 0.045
 
 # Scythe sweep
 const SWING_DURATION := 0.32
 const SCYTHE_REST_DEG := 70.0
 const SCYTHE_SWING_DEG := -80.0
-const ARM_REST_X := 0.5         # scythe arm's resting forward reach (+X = forward)
+const ARM_REST_X := 0.5
 
 # Walk cycle
 const WALK_FREQ := 9.0
@@ -43,6 +44,7 @@ var _walk_phase := 0.0
 var _walk_amt := 0.0
 var _swinging := false
 var _swing_t := 0.0
+var _seed := 100
 
 
 func _ready() -> void:
@@ -53,41 +55,41 @@ func _build_body() -> void:
 	_rig = Node3D.new()
 	add_child(_rig)
 
-	var skin := _mat(Color(0.86, 0.67, 0.52), 11)
-	var shirt := _mat(Color(0.20, 0.45, 0.74), 12)
-	var pants := _mat(Color(0.24, 0.26, 0.34), 13)
-	var boots := _mat(Color(0.30, 0.20, 0.12), 14)
-	var hair := _mat(Color(0.33, 0.21, 0.11), 15)
-	var dark := _mat(Color(0.10, 0.09, 0.08), 16)
+	var skin := Color(0.86, 0.67, 0.52)
+	var shirt := Color(0.20, 0.45, 0.74)
+	var pants := Color(0.24, 0.26, 0.34)
+	var boots := Color(0.30, 0.20, 0.12)
+	var hair := Color(0.33, 0.21, 0.11)
+	var dark := Color(0.10, 0.09, 0.08)
 
 	# Legs (pivots at the hips so they can swing).
 	_leg_l = _limb(Vector3(0.14, 0.66, 0.0))
 	_leg_r = _limb(Vector3(-0.14, 0.66, 0.0))
 	for leg in [_leg_l, _leg_r]:
-		leg.add_child(_box(Vector3(0.22, 0.46, 0.26), Vector3(0, -0.23, 0), pants))
-		leg.add_child(_box(Vector3(0.24, 0.16, 0.30), Vector3(0, -0.54, 0.02), boots))
+		leg.add_child(_part(Vector3(0.22, 0.46, 0.26), Vector3(0, -0.23, 0), pants))
+		leg.add_child(_part(Vector3(0.24, 0.16, 0.30), Vector3(0, -0.54, 0.02), boots))
 
 	# Hips + torso.
-	_rig.add_child(_box(Vector3(0.46, 0.18, 0.28), Vector3(0, 0.70, 0), pants))
-	_rig.add_child(_box(Vector3(0.50, 0.62, 0.30), Vector3(0, 0.97, 0), shirt))
+	_rig.add_child(_part(Vector3(0.46, 0.18, 0.28), Vector3(0, 0.70, 0), pants))
+	_rig.add_child(_part(Vector3(0.50, 0.62, 0.30), Vector3(0, 0.97, 0), shirt))
 
-	# Free arm (animated) + scythe arm (static, reaching forward to hold it).
+	# Free arm (animated) + scythe arm (static reach, animated during a swing).
 	_arm_free = _limb(Vector3(-0.35, 1.24, 0.0))
-	_arm_free.add_child(_box(Vector3(0.15, 0.46, 0.20), Vector3(0, -0.23, 0), shirt))
-	_arm_free.add_child(_box(Vector3(0.15, 0.12, 0.20), Vector3(0, -0.52, 0), skin))
+	_arm_free.add_child(_part(Vector3(0.15, 0.46, 0.20), Vector3(0, -0.23, 0), shirt))
+	_arm_free.add_child(_part(Vector3(0.15, 0.12, 0.20), Vector3(0, -0.52, 0), skin))
 
 	_arm_scythe = _limb(Vector3(0.35, 1.24, 0.0))
 	_arm_scythe.rotation.x = ARM_REST_X
-	_arm_scythe.add_child(_box(Vector3(0.15, 0.46, 0.20), Vector3(0, -0.23, 0), shirt))
-	_arm_scythe.add_child(_box(Vector3(0.15, 0.12, 0.20), Vector3(0, -0.52, 0), skin))
+	_arm_scythe.add_child(_part(Vector3(0.15, 0.46, 0.20), Vector3(0, -0.23, 0), shirt))
+	_arm_scythe.add_child(_part(Vector3(0.15, 0.12, 0.20), Vector3(0, -0.52, 0), skin))
 
 	# Neck + head + hair + eyes (eyes on the -Z front, which also shows facing).
-	_rig.add_child(_box(Vector3(0.16, 0.10, 0.16), Vector3(0, 1.32, 0), skin))
-	_rig.add_child(_box(Vector3(0.46, 0.46, 0.42), Vector3(0, 1.60, 0), skin))
-	_rig.add_child(_box(Vector3(0.50, 0.14, 0.46), Vector3(0, 1.84, 0), hair))
-	_rig.add_child(_box(Vector3(0.50, 0.40, 0.12), Vector3(0, 1.62, 0.17), hair))
-	_rig.add_child(_box(Vector3(0.08, 0.09, 0.05), Vector3(0.10, 1.62, -0.21), dark))
-	_rig.add_child(_box(Vector3(0.08, 0.09, 0.05), Vector3(-0.10, 1.62, -0.21), dark))
+	_rig.add_child(_part(Vector3(0.16, 0.10, 0.16), Vector3(0, 1.32, 0), skin))
+	_rig.add_child(_part(Vector3(0.46, 0.46, 0.42), Vector3(0, 1.60, 0), skin))
+	_rig.add_child(_part(Vector3(0.50, 0.14, 0.46), Vector3(0, 1.84, 0), hair))
+	_rig.add_child(_part(Vector3(0.50, 0.40, 0.12), Vector3(0, 1.62, 0.17), hair))
+	_rig.add_child(_part(Vector3(0.08, 0.09, 0.05), Vector3(0.10, 1.62, -0.21), dark))
+	_rig.add_child(_part(Vector3(0.08, 0.09, 0.05), Vector3(-0.10, 1.62, -0.21), dark))
 
 	_build_scythe()
 
@@ -98,11 +100,15 @@ func _build_scythe() -> void:
 	_scythe_pivot.rotation_degrees = Vector3(0.0, SCYTHE_REST_DEG, 0.0)
 	_rig.add_child(_scythe_pivot)
 
-	var wood := _mat(Color(0.45, 0.30, 0.16), 21)
-	var metal := _mat(Color(0.74, 0.76, 0.80), 22)
+	var wood := _solid(Color(0.45, 0.30, 0.16), 0.85)
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color(0.74, 0.76, 0.80)
+	metal.metallic = 0.55
+	metal.roughness = 0.35
+	metal.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	_scythe_pivot.add_child(_box(Vector3(0.06, 0.06, 1.3), Vector3(0, 0, -0.6), wood))
-	var blade := _box(Vector3(0.60, 0.07, 0.14), Vector3(-0.24, 0, -1.2), metal)
+	_scythe_pivot.add_child(_part_mat(Vector3(0.06, 0.06, 1.3), Vector3(0, 0, -0.6), wood))
+	var blade := _part_mat(Vector3(0.60, 0.07, 0.14), Vector3(-0.24, 0, -1.2), metal)
 	blade.rotation_degrees = Vector3(0.0, -38.0, 0.0)
 	_scythe_pivot.add_child(blade)
 
@@ -133,9 +139,7 @@ func _handle_movement(delta: float) -> void:
 	if dir != Vector2.ZERO:
 		dir = dir.normalized()
 		move = Vector3(dir.x, 0.0, dir.y)
-		# Face travel direction. Godot's forward is -Z, so the yaw that aligns
-		# -Z with `move` is atan2(-x, -z).
-		var target_yaw := atan2(-move.x, -move.z)
+		var target_yaw := atan2(-move.x, -move.z)   # Godot forward is -Z
 		rotation.y = lerp_angle(rotation.y, target_yaw, clampf(delta * TURN_SPEED, 0.0, 1.0))
 
 	current_velocity = move * SPEED
@@ -190,10 +194,8 @@ func _animate_swing(delta: float) -> void:
 		return
 	var a := sin(_swing_t * PI)   # smooth out-and-back sweep
 	_scythe_pivot.rotation_degrees.y = lerpf(SCYTHE_REST_DEG, SCYTHE_SWING_DEG, a)
-	# Drive the holding arm with the same curve so it visibly swings the scythe:
-	# a forward thrust (X) plus a sweep across the body (Y).
-	_arm_scythe.rotation.x = lerpf(ARM_REST_X, 1.0, a)
-	_arm_scythe.rotation.y = lerpf(0.0, -0.9, a)
+	_arm_scythe.rotation.x = lerpf(ARM_REST_X, 1.0, a)    # forward thrust
+	_arm_scythe.rotation.y = lerpf(0.0, -0.9, a)          # sweep across
 
 
 # --- builders ---------------------------------------------------------------
@@ -205,15 +207,25 @@ func _limb(pos: Vector3) -> Node3D:
 	return pivot
 
 
-func _mat(color: Color, rng_seed: int) -> StandardMaterial3D:
-	return Art.make_material(Art.make_pixel_texture(color, 0.05, rng_seed), 1.0)
+## Solid material with per-instance HSL + roughness variance.
+func _solid(base: Color, rough: float) -> StandardMaterial3D:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed
+	_seed += 1
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Art.vary_color(base, rng)
+	m.roughness = clampf(rough + rng.randf_range(-0.08, 0.08), 0.0, 1.0)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # required for the beveled mesh
+	return m
 
 
-func _box(size: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
-	var mesh := BoxMesh.new()
-	mesh.size = size
+func _part(size: Vector3, pos: Vector3, base: Color) -> MeshInstance3D:
+	return _part_mat(size, pos, _solid(base, 0.82))
+
+
+func _part_mat(size: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
+	mi.mesh = Art.make_beveled_box(size, BEVEL)
 	mi.material_override = mat
 	mi.position = pos
 	return mi

@@ -20,14 +20,27 @@ signal mowed_changed(count: int)
 # Set by Main before this node is added to the tree.
 var player: Node3D
 
-const SPACING := 0.5           # smaller = denser grass
+const SPACING := 0.4           # smaller = denser grass
 const EDGE_MARGIN := 0.6       # keep blades just inside the coastline
-const JITTER := 0.15           # small position scatter so it isn't a rigid grid
+const JITTER := 0.16           # small position scatter so it isn't a rigid grid
+
+# Per-blade shape variation (kills the "identical sticks" look)
+const MIN_HEIGHT := 0.62
+const MAX_HEIGHT := 1.55
+const MIN_WIDTH := 0.7
+const MAX_WIDTH := 1.45
+const MAX_TILT := deg_to_rad(16.0)   # natural lean baked per blade
+const FLOWER_CHANCE := 0.025         # rare blooms scattered among the grass
 
 # Bending
 const BEND_RADIUS := 2.4
 const MAX_LEAN := deg_to_rad(60.0)
 const SPRING := 8.0            # how fast blades settle toward their target tilt
+
+# Ambient wind sway (applied to blades the player isn't disturbing)
+const WIND_AXIS := Vector3(0.4, 0.0, 1.0)
+const WIND_AMP := deg_to_rad(7.0)
+const WIND_FREQ := 1.6
 
 # Cutting
 const CUT_RADIUS := 2.2
@@ -46,18 +59,62 @@ var _clock := 0.0
 var mowed := 0
 
 var _blade_mesh: BoxMesh
-var _blade_mat: StandardMaterial3D
+var _blade_mats: Array = []     # a pool of slightly varied blade materials
+var _wind_axis := WIND_AXIS.normalized()
 var _clippings: CPUParticles3D
 var _anim_rng := RandomNumberGenerator.new()
+
+# Shared flower resources (rare blooms)
+var _stem_mesh: BoxMesh
+var _petal_mesh: BoxMesh
+var _center_mesh: BoxMesh
+var _stem_mat: StandardMaterial3D
+var _center_mat: StandardMaterial3D
+var _flower_colors: Array = []
 
 
 func _ready() -> void:
 	_anim_rng.seed = 4242
 	_blade_mesh = BoxMesh.new()
 	_blade_mesh.size = Vector3(0.07, 0.6, 0.07)
-	_blade_mat = Art.make_material(
-		Art.make_gradient_texture(Color(0.20, 0.42, 0.16), Color(0.46, 0.80, 0.34), 70), 1.0
-	)
+
+	# A wider pool of HSL-varied gradients spanning several green tones so the
+	# field doesn't read as one flat color.
+	var grass_bases := [
+		[Color(0.18, 0.40, 0.14), Color(0.42, 0.74, 0.30)],   # standard
+		[Color(0.15, 0.33, 0.12), Color(0.33, 0.60, 0.23)],   # darker
+		[Color(0.24, 0.46, 0.16), Color(0.57, 0.83, 0.35)],   # lighter
+		[Color(0.17, 0.42, 0.21), Color(0.39, 0.78, 0.47)],   # bluish
+		[Color(0.30, 0.45, 0.15), Color(0.63, 0.80, 0.32)],   # yellowish
+	]
+	var mrng := RandomNumberGenerator.new()
+	mrng.seed = 71
+	var idx := 0
+	for pair in grass_bases:
+		for v in 2:
+			var bottom := Art.vary_color(pair[0], mrng)
+			var top := Art.vary_color(pair[1], mrng)
+			_blade_mats.append(Art.make_material(Art.make_gradient_texture(bottom, top, 70 + idx), 1.0))
+			idx += 1
+
+	# Flower resources — meshes/mats shared across all blooms; petal colour varies.
+	_stem_mesh = BoxMesh.new()
+	_stem_mesh.size = Vector3(0.05, 0.5, 0.05)
+	_petal_mesh = BoxMesh.new()
+	_petal_mesh.size = Vector3(0.12, 0.06, 0.12)
+	_center_mesh = BoxMesh.new()
+	_center_mesh.size = Vector3(0.12, 0.12, 0.12)
+	_stem_mat = StandardMaterial3D.new()
+	_stem_mat.albedo_color = Color(0.24, 0.46, 0.20)
+	_stem_mat.roughness = 1.0
+	_center_mat = StandardMaterial3D.new()
+	_center_mat.albedo_color = Color(0.95, 0.82, 0.25)
+	_center_mat.roughness = 0.8
+	_flower_colors = [
+		Color(0.86, 0.22, 0.22), Color(0.96, 0.96, 0.92), Color(0.95, 0.52, 0.72),
+		Color(0.62, 0.33, 0.82), Color(0.96, 0.80, 0.24), Color(0.42, 0.52, 0.92),
+	]
+
 	_build_clippings()
 	_plant_field()
 
@@ -109,27 +166,73 @@ func _plant_field() -> void:
 			var pz := z + rng.randf_range(-JITTER, JITTER)
 			var ang := atan2(pz, px)
 			if Vector2(px, pz).length() <= Art.island_radius(ang) - EDGE_MARGIN:
-				_make_blade(px, pz, rng.randf_range(0.0, TAU), rng.randf_range(0.9, 1.12))
+				if rng.randf() < FLOWER_CHANCE:
+					_add_plant(px, pz, rng.randf_range(0.9, 1.1), _make_flower_child(rng))
+				else:
+					var mat: Material = _blade_mats[rng.randi() % _blade_mats.size()]
+					var child := _make_grass_child(
+						rng.randf_range(0.0, TAU),                  # facing
+						rng.randf_range(MIN_WIDTH, MAX_WIDTH),       # thickness
+						rng.randf_range(-MAX_TILT, MAX_TILT),        # lean x
+						rng.randf_range(-MAX_TILT, MAX_TILT),        # lean z
+						mat
+					)
+					_add_plant(px, pz, rng.randf_range(MIN_HEIGHT, MAX_HEIGHT), child)
 			z += SPACING
 		x += SPACING
 
 
-func _make_blade(px: float, pz: float, yaw: float, base_h: float) -> void:
-	var pivot := Node3D.new()              # tilt + grow + cut-pop happen here
+## Shared pivot setup for any plant (grass blade or flower). tilt + grow +
+## cut-pop happen on the pivot; the child holds the visual.
+func _add_plant(px: float, pz: float, base_h: float, child: Node3D) -> void:
+	var pivot := Node3D.new()
 	pivot.position = Vector3(px, 0.0, pz)
 	pivot.scale = Vector3(1.0, base_h, 1.0)
 	pivot.set_meta("base_h", base_h)
 	pivot.set_meta("busy", false)
-
-	var mi := MeshInstance3D.new()         # the actual blade, lifted to sit on the ground
-	mi.mesh = _blade_mesh
-	mi.material_override = _blade_mat
-	mi.position = Vector3(0.0, 0.3, 0.0)
-	mi.rotation.y = yaw                     # random facing so it doesn't look gridded
-	pivot.add_child(mi)
-
+	pivot.add_child(child)
 	add_child(pivot)
 	_blades.append(pivot)
+
+
+func _make_grass_child(yaw: float, width: float, tilt_x: float, tilt_z: float, mat: Material) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()         # lifted so its base sits on the ground
+	mi.mesh = _blade_mesh
+	mi.material_override = mat
+	mi.position = Vector3(0.0, 0.3, 0.0)
+	mi.rotation = Vector3(tilt_x, yaw, tilt_z)
+	mi.scale = Vector3(width, 1.0, width)
+	return mi
+
+
+func _make_flower_child(rng: RandomNumberGenerator) -> Node3D:
+	var g := Node3D.new()
+
+	var stem := MeshInstance3D.new()
+	stem.mesh = _stem_mesh
+	stem.material_override = _stem_mat
+	stem.position = Vector3(0.0, 0.25, 0.0)
+	g.add_child(stem)
+
+	var pmat := StandardMaterial3D.new()
+	pmat.albedo_color = Art.vary_color(_flower_colors[rng.randi() % _flower_colors.size()], rng)
+	pmat.roughness = 0.7
+	var hy := 0.54
+	for off in [Vector3(0.12, 0, 0), Vector3(-0.12, 0, 0), Vector3(0, 0, 0.12), Vector3(0, 0, -0.12)]:
+		var petal := MeshInstance3D.new()
+		petal.mesh = _petal_mesh
+		petal.material_override = pmat
+		petal.position = Vector3(off.x, hy, off.z)
+		g.add_child(petal)
+
+	var center := MeshInstance3D.new()
+	center.mesh = _center_mesh
+	center.material_override = _center_mat
+	center.position = Vector3(0.0, hy + 0.02, 0.0)
+	g.add_child(center)
+
+	g.rotation.y = rng.randf_range(0.0, TAU)
+	return g
 
 
 func _process(delta: float) -> void:
@@ -152,14 +255,16 @@ func _update_bend(delta: float) -> void:
 		var to := b.global_position - p
 		to.y = 0.0
 		var dist := to.length()
-		var target := Quaternion.IDENTITY
+		var target: Quaternion
 		if dist > 0.001 and dist < BEND_RADIUS:
 			var push := to / dist                          # horizontal dir away from player
 			var strength := 1.0 - dist / BEND_RADIUS        # 0 at edge, 1 on top of player
 			var axis := Vector3(push.z, 0.0, -push.x).normalized()
 			target = Quaternion(axis, strength * MAX_LEAN)  # tip leans toward `push`
-		elif b.quaternion.is_equal_approx(Quaternion.IDENTITY):
-			continue                                        # far + already upright: skip work
+		else:
+			# Gentle ambient breeze: per-blade phase so the field ripples, not sways as one.
+			var phase := b.position.x * 0.6 + b.position.z * 0.45
+			target = Quaternion(_wind_axis, sin(_clock * WIND_FREQ + phase) * WIND_AMP)
 		b.quaternion = b.quaternion.slerp(target, w)
 
 

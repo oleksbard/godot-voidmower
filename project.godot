@@ -18,8 +18,10 @@ window/stretch/mode="canvas_items"
 
 [rendering]
 
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
-; Crisp pixels: keep the default 3D texture filtering out of the way; each
-; material sets NEAREST filtering itself so the procedural textures stay sharp.
+; Forward+ for the full post-processing stack (ACES tonemap, glow/bloom, SSAO)
+; and triplanar normal maps — the techniques the delivery-game look relies on.
+renderer/rendering_method="forward_plus"
+renderer/rendering_method.mobile="mobile"
+; Crisp pixels: each material sets NEAREST filtering itself so procedural
+; textures stay sharp regardless of this default.
 textures/canvas_textures/default_texture_filter=0

@@ -11,11 +11,6 @@ func _ready() -> void:
 	_count_label.text = "Mowed: 0"
 	add_child(_count_label)
 
-	var hint := _make_label(16, Vector2(18.0, 52.0))
-	hint.modulate = Color(1, 1, 1, 0.8)
-	hint.text = "WASD / Arrows: move    Space: swing scythe"
-	add_child(hint)
-
 
 func set_count(count: int) -> void:
 	_count_label.text = "Mowed: %d" % count

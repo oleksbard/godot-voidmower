@@ -2,7 +2,7 @@
   <img src="assets/voidmower-mascot.png" alt="VoidMower mascot" width="180">
 </p>
 
-<h1 align="center">Floating Island Mower</h1>
+<h1 align="center">Voidmower</h1>
 
 A tiny **Godot 4** 3D prototype: a blocky kid with a scythe mows grass on a
 floating island in space. Everything is built procedurally in GDScript — no
@@ -21,5 +21,3 @@ Auto-detects Godot; override with `GODOT=/path/to/godot ./play.sh`.
 
 - **WASD / Arrows** — move & turn
 - **Space** — swing the scythe
-
-Grass bends as you walk near, gets cut by the scythe, and regrows after ~8s.
