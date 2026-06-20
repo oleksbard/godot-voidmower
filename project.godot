@@ -1,0 +1,25 @@
+config_version=5
+
+; Floating Island Mower — a plain, quick Godot 4 prototype.
+; Everything visual is built procedurally in GDScript (see Main.gd), so there
+; are no external assets to import. Just open this folder in Godot 4.7 and run.
+
+[application]
+
+config/name="Floating Island Mower"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+; Crisp pixels: keep the default 3D texture filtering out of the way; each
+; material sets NEAREST filtering itself so the procedural textures stay sharp.
+textures/canvas_textures/default_texture_filter=0
