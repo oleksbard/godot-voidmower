@@ -1,3 +1,4 @@
+class_name Player
 extends Node3D
 ## The mower: a little character holding a scythe.
 ##
@@ -12,7 +13,9 @@ extends Node3D
 ## Visual parts hang under `_rig`; movement/turning happen on the root, so the
 ## walk bob never moves the root origin the camera follows (no shake).
 
-const Art := preload("res://Main.gd")  # reuse beveled box + colour-variance helpers
+const MeshFactory := preload("res://src/lib/mesh_factory.gd")
+const ColorUtil := preload("res://src/lib/color_util.gd")
+const IslandShape := preload("res://src/lib/island_shape.gd")
 
 signal swing(origin: Vector3, forward: Vector3)
 
@@ -152,7 +155,7 @@ func _clamp_to_island() -> void:
 	if h.length() < 0.001:
 		return
 	var ang := atan2(position.z, position.x)
-	var max_r := Art.island_radius(ang) - EDGE_MARGIN
+	var max_r := IslandShape.radius(ang) - EDGE_MARGIN
 	if h.length() > max_r:
 		h = h.normalized() * max_r
 		position.x = h.x
@@ -213,7 +216,7 @@ func _solid(base: Color, rough: float) -> StandardMaterial3D:
 	rng.seed = _seed
 	_seed += 1
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Art.vary_color(base, rng)
+	m.albedo_color = ColorUtil.vary(base, rng)
 	m.roughness = clampf(rough + rng.randf_range(-0.08, 0.08), 0.0, 1.0)
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # required for the beveled mesh
 	return m
@@ -225,7 +228,7 @@ func _part(size: Vector3, pos: Vector3, base: Color) -> MeshInstance3D:
 
 func _part_mat(size: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
-	mi.mesh = Art.make_beveled_box(size, BEVEL)
+	mi.mesh = MeshFactory.beveled_box(size, BEVEL)
 	mi.material_override = mat
 	mi.position = pos
 	return mi

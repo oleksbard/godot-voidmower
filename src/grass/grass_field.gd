@@ -1,3 +1,4 @@
+class_name GrassField
 extends Node3D
 ## A field of grass blades the player can walk through and mow.
 ##
@@ -13,7 +14,9 @@ extends Node3D
 ## so the two never fight each other. A per-blade "busy" flag keeps the bend
 ## loop from touching blades mid-cut or mid-regrow.
 
-const Art := preload("res://Main.gd")  # reuse texture/material helpers
+const TextureFactory := preload("res://src/lib/texture_factory.gd")
+const ColorUtil := preload("res://src/lib/color_util.gd")
+const IslandShape := preload("res://src/lib/island_shape.gd")
 
 signal mowed_changed(count: int)
 
@@ -92,9 +95,9 @@ func _ready() -> void:
 	var idx := 0
 	for pair in grass_bases:
 		for v in 2:
-			var bottom := Art.vary_color(pair[0], mrng)
-			var top := Art.vary_color(pair[1], mrng)
-			_blade_mats.append(Art.make_material(Art.make_gradient_texture(bottom, top, 70 + idx), 1.0))
+			var bottom := ColorUtil.vary(pair[0], mrng)
+			var top := ColorUtil.vary(pair[1], mrng)
+			_blade_mats.append(TextureFactory.material(TextureFactory.gradient(bottom, top, 70 + idx), 1.0))
 			idx += 1
 
 	# Flower resources — meshes/mats shared across all blooms; petal colour varies.
@@ -157,7 +160,7 @@ func _plant_field() -> void:
 	# fall inside the real organic coastline (just inside the cliff edge).
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1337
-	var limit := Art.ISLAND_RADIUS * 1.32
+	var limit := IslandShape.BASE * 1.32
 	var x := -limit
 	while x <= limit:
 		var z := -limit
@@ -165,7 +168,7 @@ func _plant_field() -> void:
 			var px := x + rng.randf_range(-JITTER, JITTER)
 			var pz := z + rng.randf_range(-JITTER, JITTER)
 			var ang := atan2(pz, px)
-			if Vector2(px, pz).length() <= Art.island_radius(ang) - EDGE_MARGIN:
+			if Vector2(px, pz).length() <= IslandShape.radius(ang) - EDGE_MARGIN:
 				if rng.randf() < FLOWER_CHANCE:
 					_add_plant(px, pz, rng.randf_range(0.9, 1.1), _make_flower_child(rng))
 				else:
@@ -215,7 +218,7 @@ func _make_flower_child(rng: RandomNumberGenerator) -> Node3D:
 	g.add_child(stem)
 
 	var pmat := StandardMaterial3D.new()
-	pmat.albedo_color = Art.vary_color(_flower_colors[rng.randi() % _flower_colors.size()], rng)
+	pmat.albedo_color = ColorUtil.vary(_flower_colors[rng.randi() % _flower_colors.size()], rng)
 	pmat.roughness = 0.7
 	var hy := 0.54
 	for off in [Vector3(0.12, 0, 0), Vector3(-0.12, 0, 0), Vector3(0, 0, 0.12), Vector3(0, 0, -0.12)]:

@@ -1,5 +1,6 @@
+class_name Hud
 extends CanvasLayer
-## Minimal heads-up display: a "Mowed: N" counter plus a controls hint.
+## Minimal heads-up display: a "Mowed: N" counter.
 ## Uses Godot's built-in font (no asset needed) with a dark outline so it stays
 ## readable over the grass.
 
