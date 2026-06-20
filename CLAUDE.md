@@ -21,8 +21,8 @@ criterion is *feel*, not realism or mechanics depth.
 # Headless validation — load the project, run N frames, surface script errors:
 ~/Downloads/Godot.app/Contents/MacOS/Godot --headless --path . --quit-after 120
 
-# Tests (once gdUnit4 is added — see docs/guidelines/testing.md):
-# GODOT_BIN=/path/to/godot ./addons/gdUnit4/runtest.sh -a res://test/
+# Headless test suite (exit 0 = all pass; CI-friendly). See docs/guidelines/testing.md:
+./test/run_tests.sh
 ```
 
 **Always run the headless validation after editing `.gd` files** — it catches
@@ -88,6 +88,8 @@ Cross-script references load via `preload()` consts (robust on a cold clone / CI
 — bare `class_name` needs the editor's global class cache). Features communicate
 call-down / signal-up; the composition root is the only place that knows them all.
 
+A headless test suite covers the deterministic core ([P5](docs/refactor-plan.md)
+done — `./test/run_tests.sh`, 15 checks).
+
 **Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): P3 split
-mesh-build from control, **P4 grass → MultiMesh** (the perf phase), P5 gdUnit4
-tests, P6 cleanup.
+mesh-build from control, **P4 grass → MultiMesh** (the perf phase), P6 cleanup.

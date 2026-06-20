@@ -1,0 +1,51 @@
+name: CI
+
+# Run on every push and on pull requests.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Headless tests
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: "4.7-stable"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Godot
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-bin
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Install Godot
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/godot-bin
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fSL -o /tmp/godot.zip "$url"
+          unzip -o /tmp/godot.zip -d /tmp/godot
+          mv "/tmp/godot/Godot_v${GODOT_VERSION}_linux.x86_64" ~/godot-bin/godot
+          chmod +x ~/godot-bin/godot
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/godot-bin" >> "$GITHUB_PATH"
+
+      - name: Import resources
+        # First headless run builds the .godot import cache. Tolerate warnings.
+        run: godot --headless --path . --import || true
+
+      - name: Smoke test — project loads and runs
+        # Boots the main scene for 120 frames; fails on any _ready/runtime error.
+        run: godot --headless --path . --quit-after 120
+
+      - name: Run test suite
+        # run_tests.sh finds `godot` on PATH; exits non-zero on any failure.
+        # Invoked via `bash` so it doesn't depend on the file's executable bit.
+        run: bash test/run_tests.sh

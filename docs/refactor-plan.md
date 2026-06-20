@@ -121,9 +121,16 @@ in the Profiler/Monitor; bend/cut/regrow still feel right in the window.
 
 ---
 
-## Phase 5 — Tests (gdUnit4)
+## Phase 5 — Tests — ✅ DONE
 
 **Goal:** lock down the now-extracted pure logic ([testing.md](guidelines/testing.md)).
+
+> **Done with a zero-dependency runner, not gdUnit4.** On the brand-new Godot 4.7
+> gdUnit4's addon/version-compat risk wasn't worth it for a prototype's pure-logic
+> tests. `test/run_tests.gd` (`./test/run_tests.sh`) extends `SceneTree`, exits
+> 0/1, and covers IslandShape, ColorUtil, MeshFactory, the player edge clamp,
+> grass planting, and the swing→cut→count chain — **15 checks, all green**.
+> gdUnit4 (steps below) stays the upgrade path for scene_runner / mocking.
 
 1. Install `addons/gdUnit4/`, enable plugin.
 2. `test/` mirrors `src/`. Suites:
