@@ -19,6 +19,7 @@ const DayNightScript := preload("res://src/world/day_night.gd")
 const ItemDbScript := preload("res://src/inventory/item_db.gd")
 const InventoryScript := preload("res://src/inventory/inventory.gd")
 const HotbarScript := preload("res://src/inventory/hotbar.gd")
+const ItemModelScript := preload("res://src/inventory/item_model.gd")
 const DropFieldScript := preload("res://src/drops/drop_field.gd")
 
 var _passed := 0
@@ -41,6 +42,7 @@ func _initialize() -> void:
 	await _test_flower_mow()
 	await _test_day_night_node()
 	await _test_hotbar()
+	await _test_item_model()
 	await _test_drop_field()
 	await _test_player_tool_gating()
 	await _test_grass_drops()
@@ -337,7 +339,33 @@ func _test_hotbar() -> void:
 	_ok(hb._key_to_slot(KEY_1) == 0 and hb._key_to_slot(KEY_9) == 8 and hb._key_to_slot(KEY_0) == 9 and hb._key_to_slot(KEY_A) == -1,
 		"number keys 1-9/0 map to slots; other keys are ignored")
 
+	_ok(hb._models[1] != null and hb._models[1].get_child_count() > 0,
+		"a slot with an item gets a 3D model rendered in its viewport")
+
 	hb.free()
+
+
+# --- ItemModel --------------------------------------------------------------
+
+func _test_item_model() -> void:
+	_suite = "ItemModel"
+	for id in [ItemDbScript.Id.SCYTHE, ItemDbScript.Id.GRASS, ItemDbScript.Id.FLOWER]:
+		var model := ItemModelScript.build(id)
+		_ok(model != null and _count_meshes(model) > 0,
+			"item %d builds a model with mesh geometry (%d meshes)" % [id, _count_meshes(model) if model != null else 0])
+		if model != null:
+			model.free()
+	_ok(ItemModelScript.build(-1) == null, "an unknown item id yields no model")
+
+
+## Recursively count MeshInstance3D descendants of `node`.
+func _count_meshes(node: Node) -> int:
+	var n := 0
+	if node is MeshInstance3D:
+		n += 1
+	for child in node.get_children():
+		n += _count_meshes(child)
+	return n
 
 
 # --- DropField --------------------------------------------------------------

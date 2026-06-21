@@ -44,10 +44,11 @@ parse errors and `_ready` runtime errors without opening a window.
 If a change forces breaking the procedural / Forward+ / warm-palette setup,
 surface the tradeoff before implementing.
 
-**2D brand art** (mascot, README) lives in `assets/` and is never loaded into the
-3D world. The **item icons** in `assets/icons/` are the one thing loaded at
-runtime — into the 2D hotbar UI (a `CanvasLayer`), never into the 3D scene, so
-the in-engine "procedural geometry only, zero image assets" rule still stands.
+**2D brand art** (mascot, README, the `assets/icons/` pixel-art item icons) lives
+in `assets/` for branding/docs and is **never loaded at runtime**. The hotbar
+shows each item as a small **procedural low-poly 3D model** (`item_model.gd`)
+rendered in a per-slot `SubViewport` — so the "procedural geometry only, zero
+image assets" rule now holds even in the UI; the icons are reference art only.
 Keep brand art consistent per [`docs/image-direction.md`](docs/image-direction.md).
 
 ## Conventions (load-bearing summary)
@@ -92,7 +93,8 @@ src/
   ui/     hud.gd                   # day + time HUD
   inventory/ item_db.gd            # item registry (ids, names, icon paths, stacks)
              inventory.gd          # pure 10-slot model: stacking + active slot
-             hotbar.gd             # bottom hotbar UI + number-key select (loads icons)
+             hotbar.gd             # bottom hotbar UI: per-slot 3D model viewports + number-key select
+             item_model.gd         # builds the procedural low-poly item models (scythe/grass/flower)
   drops/  drop_field.gd            # procedural pickup tokens that fly to the player
   lib/    color_util.gd           # HSL + roughness variance
           texture_factory.gd      # procedural pixel/speckle/gradient textures
@@ -106,7 +108,7 @@ Cross-script references load via `preload()` consts (robust on a cold clone / CI
 call-down / signal-up; the composition root is the only place that knows them all.
 
 A headless test suite covers the deterministic core ([P5](docs/refactor-plan.md)
-done — `./test/run_tests.sh`, 51 checks).
+done — `./test/run_tests.sh`, 57 checks).
 
 **Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): only P6
 cleanup (`.gdignore` in `docs/`, dead-code sweep, doc polish).
