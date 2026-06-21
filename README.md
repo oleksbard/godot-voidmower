@@ -1,5 +1,6 @@
 <p align="center">
-  <img src="assets/voidmower-mascot.png" alt="VoidMower mascot" width="180">
+  <img src="assets/voidmower-mascot.png" alt="VoidMower mascot" width="256">
+  <img src="assets/captain.png" alt="Captain Maris &quot;Goldwake&quot; Tully" width="256">
 </p>
 
 <h1 align="center">Voidmower</h1>
