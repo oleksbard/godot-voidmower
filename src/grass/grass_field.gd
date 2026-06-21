@@ -20,8 +20,10 @@ const TextureFactory := preload("res://src/lib/texture_factory.gd")
 const ColorUtil := preload("res://src/lib/color_util.gd")
 const IslandShape := preload("res://src/lib/island_shape.gd")
 const FlowerFieldScript := preload("res://src/grass/flower_field.gd")
+const ItemDb := preload("res://src/inventory/item_db.gd")
 
 signal mowed_changed(count: int)
+signal item_dropped(item_id: int, world_pos: Vector3)
 
 # Set by Main before this node is added to the tree.
 var player: Node3D
@@ -57,6 +59,7 @@ const CUT_RADIUS := 2.2
 const ARC_HALF_DEG := 70.0     # half-width of the swing arc in front of player
 const CUT_ANIM_TIME := 0.3     # duration of the cute pop before the blade hides
 const CUT_HOP_HEIGHT := 0.5    # how high a cut blade hops during its pop
+const GRASS_DROP_CHANCE := 0.10   # chance a mown blade yields a grass item
 
 # Regrow / grow-in
 const REGROW_DELAY := 45.0    # wait this long before a mown blade starts regrowing
@@ -87,6 +90,7 @@ var _clippings: CPUParticles3D
 var _pop_mesh: BoxMesh
 var _pop_mat: StandardMaterial3D
 var _anim_rng := RandomNumberGenerator.new()
+var _drop_rng := RandomNumberGenerator.new()
 
 var _cutting: Array = []        # transient flying-blade pops [{node, t, axis, base_h}]
 var _regrow_queue: Array = []   # [{i, at}]
@@ -97,10 +101,12 @@ var _flowers: Node3D            # FlowerField (typed as Node3D for cold-cache sa
 
 func _ready() -> void:
 	_anim_rng.seed = 4242
+	_drop_rng.seed = 9001
 	_build_multimesh()
 	_build_pop_resources()
 	_build_clippings()
 	_flowers = FlowerFieldScript.new()
+	_flowers.flower_dropped.connect(_on_flower_dropped)
 	add_child(_flowers)
 	_plant_field()
 
@@ -289,6 +295,8 @@ func on_swing(origin: Vector3, forward: Vector3) -> void:
 		var dist := to.length()
 		if dist <= CUT_RADIUS and (dist < 0.001 or f.dot(to / dist) >= cos_arc):
 			_cut_blade(i)
+			if _drop_rng.randf() < GRASS_DROP_CHANCE:
+				item_dropped.emit(ItemDb.Id.GRASS, _base_pos[i])
 			sum += _base_pos[i]
 			newly += 1
 
@@ -306,6 +314,12 @@ func on_swing(origin: Vector3, forward: Vector3) -> void:
 		_clippings.global_position = Vector3(centroid.x, 0.35, centroid.z)
 		_clippings.restart()
 		_clippings.emitting = true
+
+
+## FlowerField rolls its own 5% drop and reports up; we forward it as the single
+## item_dropped stream Main consumes (Main never needs to know FlowerField).
+func _on_flower_dropped(world_pos: Vector3) -> void:
+	item_dropped.emit(ItemDb.Id.FLOWER, world_pos)
 
 
 ## Hide the instance instantly and hand its pop off to a transient node, then

@@ -39,8 +39,18 @@ func _ready() -> void:
 	var hud := preload("res://src/ui/hud.gd").new()
 	add_child(hud)
 
+	var drops := preload("res://src/drops/drop_field.gd").new()
+	drops.player = player
+	add_child(drops)
+
+	var hotbar := preload("res://src/inventory/hotbar.gd").new()
+	add_child(hotbar)
+
 	player.swing.connect(grass.on_swing)
 	day_night.time_changed.connect(hud.set_time)
+	grass.item_dropped.connect(drops.spawn)
+	drops.collected.connect(hotbar.add_item.bind(1))      # one item per collected token
+	hotbar.active_tool_changed.connect(player.set_active_tool)
 
 	_build_camera()
 

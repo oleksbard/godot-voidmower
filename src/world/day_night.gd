@@ -77,9 +77,11 @@ static func clock_hours(t: float) -> float:
 	return fposmod(t * 24.0 + 6.0, 24.0)
 
 
-## 1-based day count for elapsed seconds (a new day begins each dawn).
+## 1-based day count for elapsed seconds. A new day begins at midnight (00:00).
+## The game starts at Day 1 / 06:00 (phase 0); midnight falls at phase 0.75, so
+## shift by 0.25 to land the day boundary on the midnight crossing.
 static func day_number(elapsed: float) -> int:
-	return int(elapsed / CYCLE_SECONDS) + 1
+	return int(elapsed / CYCLE_SECONDS + 0.25) + 1
 
 
 func _ready() -> void:

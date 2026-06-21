@@ -16,6 +16,10 @@ const PlayerRigScript := preload("res://src/player/player_rig.gd")
 const GrassFieldScript := preload("res://src/grass/grass_field.gd")
 const FlowerFieldScript := preload("res://src/grass/flower_field.gd")
 const DayNightScript := preload("res://src/world/day_night.gd")
+const ItemDbScript := preload("res://src/inventory/item_db.gd")
+const InventoryScript := preload("res://src/inventory/inventory.gd")
+const HotbarScript := preload("res://src/inventory/hotbar.gd")
+const DropFieldScript := preload("res://src/drops/drop_field.gd")
 
 var _passed := 0
 var _failed := 0
@@ -28,12 +32,18 @@ func _initialize() -> void:
 	_test_color_util()
 	_test_mesh_factory()
 	_test_day_night_math()
+	_test_item_db()
+	_test_inventory()
 	_test_player_edge_clamp()
 	await _test_player_rig()        # in-tree _ready() builds the body
 	await _test_grass_planting()   # need a frame so _ready() fires in-tree
 	await _test_mow_chain()
 	await _test_flower_mow()
 	await _test_day_night_node()
+	await _test_hotbar()
+	await _test_drop_field()
+	await _test_player_tool_gating()
+	await _test_grass_drops()
 	print("──")
 	print("%d passed, %d failed" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
@@ -115,6 +125,58 @@ func _test_day_night_math() -> void:
 		"clock reads 06:00 at dawn and 12:00 at midday")
 	_ok(DayNightScript.day_number(0.0) == 1 and DayNightScript.day_number(DayNightScript.CYCLE_SECONDS) == 2,
 		"day number starts at 1 and ticks up each cycle")
+	_ok(DayNightScript.day_number(DayNightScript.CYCLE_SECONDS * 0.74) == 1
+			and DayNightScript.day_number(DayNightScript.CYCLE_SECONDS * 0.76) == 2,
+		"day increments at midnight (phase 0.75), not at dawn")
+
+
+# --- ItemDb -----------------------------------------------------------------
+
+func _test_item_db() -> void:
+	_suite = "ItemDb"
+	_ok(ItemDbScript.is_tool_item(ItemDbScript.Id.SCYTHE) and ItemDbScript.max_stack(ItemDbScript.Id.SCYTHE) == 1,
+		"scythe is a tool with stack 1")
+	_ok(not ItemDbScript.is_tool_item(ItemDbScript.Id.GRASS) and ItemDbScript.max_stack(ItemDbScript.Id.GRASS) == 999,
+		"grass is a non-tool with stack 999")
+	_ok(ItemDbScript.max_stack(ItemDbScript.Id.FLOWER) == 999,
+		"flower stacks to 999")
+	_ok(ItemDbScript.icon_path(ItemDbScript.Id.GRASS) == "res://assets/icons/grass.png",
+		"grass icon path resolves")
+
+
+# --- Inventory --------------------------------------------------------------
+
+func _test_inventory() -> void:
+	_suite = "Inventory"
+	var inv := InventoryScript.new()
+	var all_empty := true
+	for i in InventoryScript.SLOT_COUNT:
+		if inv.slot_id(i) != InventoryScript.EMPTY:
+			all_empty = false
+	_ok(all_empty and inv.active_index() == 0, "starts with 10 empty slots, active slot 0")
+
+	inv.set_slot(0, ItemDbScript.Id.SCYTHE, 1)
+	_ok(inv.slot_id(0) == ItemDbScript.Id.SCYTHE and inv.active_item() == ItemDbScript.Id.SCYTHE,
+		"scythe seeds slot 0 and is the active item")
+
+	inv.add(ItemDbScript.Id.GRASS, 5)
+	var left := inv.add(ItemDbScript.Id.GRASS, 3)
+	_ok(inv.slot_id(1) == ItemDbScript.Id.GRASS and inv.slot_count(1) == 8 and left == 0,
+		"same-item adds merge into one stack")
+
+	var inv2 := InventoryScript.new()
+	var leftover := inv2.add(ItemDbScript.Id.GRASS, 1000)
+	_ok(inv2.slot_count(0) == 999 and inv2.slot_id(1) == ItemDbScript.Id.GRASS and inv2.slot_count(1) == 1 and leftover == 0,
+		"overflow past max_stack spills into the next slot")
+
+	inv.set_active(99)
+	var hi := inv.active_index()
+	inv.set_active(-4)
+	var lo := inv.active_index()
+	_ok(hi == InventoryScript.SLOT_COUNT - 1 and lo == 0, "set_active clamps to the valid slot range")
+
+	_ok(inv2.active_item() == ItemDbScript.Id.GRASS and InventoryScript.new().active_item() == InventoryScript.EMPTY,
+		"active_item returns the active slot id, EMPTY when blank")
 
 
 # --- Player edge clamp ------------------------------------------------------
@@ -251,6 +313,111 @@ func _test_day_night_node() -> void:
 		"night raises exposure above the day value")
 
 	dn.free()
+
+
+# --- Hotbar -----------------------------------------------------------------
+
+func _test_hotbar() -> void:
+	_suite = "Hotbar"
+	var hb := HotbarScript.new()
+	get_root().add_child(hb)
+	await process_frame                      # _ready builds slots + seeds the scythe
+
+	_ok(hb._inv.slot_id(0) == ItemDbScript.Id.SCYTHE, "scythe seeded into slot 0 (key 1)")
+
+	hb.add_item(ItemDbScript.Id.GRASS, 2)
+	_ok(hb._inv.slot_id(1) == ItemDbScript.Id.GRASS and hb._inv.slot_count(1) == 2,
+		"add_item routes a drop into the inventory")
+
+	var seen := {"id": -999}
+	hb.active_tool_changed.connect(func(id): seen.id = id)
+	hb._select(1)
+	_ok(seen.id == ItemDbScript.Id.GRASS, "selecting a slot announces its item as the active tool")
+
+	_ok(hb._key_to_slot(KEY_1) == 0 and hb._key_to_slot(KEY_9) == 8 and hb._key_to_slot(KEY_0) == 9 and hb._key_to_slot(KEY_A) == -1,
+		"number keys 1-9/0 map to slots; other keys are ignored")
+
+	hb.free()
+
+
+# --- DropField --------------------------------------------------------------
+
+func _test_drop_field() -> void:
+	_suite = "DropField"
+	var target := Node3D.new()
+	get_root().add_child(target)             # player ref must be in-tree for global_position
+	var df := DropFieldScript.new()
+	df.player = target
+	get_root().add_child(df)
+	await process_frame
+
+	df.spawn(ItemDbScript.Id.GRASS, Vector3(3.0, 0.0, 3.0))
+	df._process(0.1)                          # ~22% of the flight: still travelling
+	_ok(df._flying.size() == 1, "a spawned token is in flight")
+
+	var got := {"n": 0, "id": -999}
+	df.collected.connect(func(id): got.n += 1; got.id = id)
+	df._process(1.0)                          # force t >= 1: arrival
+	_ok(got.n == 1 and got.id == ItemDbScript.Id.GRASS, "token arrives once and reports its item")
+	_ok(df._flying.is_empty(), "the arrived token is removed from the flight list")
+
+	df.free()
+	target.free()
+
+
+# --- Player tool-gating -----------------------------------------------------
+
+func _test_player_tool_gating() -> void:
+	_suite = "Player.tool"
+	var p: Node3D = PlayerScript.new()
+	get_root().add_child(p)
+	await process_frame                       # _ready builds the rig
+
+	var swings := {"n": 0}
+	p.swing.connect(func(_o, _f): swings.n += 1)
+
+	p.set_active_tool(ItemDbScript.Id.GRASS)
+	p._try_swing()
+	_ok(not p._rig.scythe_pivot.visible and swings.n == 0,
+		"a non-tool slot hides the scythe and SPACE does nothing")
+
+	p.set_active_tool(ItemDbScript.Id.SCYTHE)
+	p._try_swing()
+	_ok(p._rig.scythe_pivot.visible and swings.n == 1,
+		"the scythe slot shows the scythe and SPACE swings")
+
+	p.free()
+
+
+# --- GrassField drops -------------------------------------------------------
+
+func _test_grass_drops() -> void:
+	_suite = "GrassField.drops"
+	var dummy := Node3D.new()
+	get_root().add_child(dummy)
+	var gf: Node3D = GrassFieldScript.new()
+	gf.player = dummy
+	get_root().add_child(gf)
+	await process_frame                       # plant the field in-tree
+
+	var drops := []
+	gf.item_dropped.connect(func(id, pos): drops.append({"id": id, "pos": pos}))
+
+	# Sweep several swing origins/directions so a large slice of the field is cut.
+	# Fixed planting + drop seeds make the result deterministic and reproducible.
+	for o in [Vector3.ZERO, Vector3(3, 0, 0), Vector3(-3, 0, 0), Vector3(0, 0, 3), Vector3(0, 0, -3)]:
+		for d in [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)]:
+			gf.on_swing(o, d)
+
+	var ids_valid := true
+	for e in drops:
+		if e.id != ItemDbScript.Id.GRASS and e.id != ItemDbScript.Id.FLOWER:
+			ids_valid = false
+	_ok(drops.size() > 0, "mowing the field drops at least one item (%d drops)" % drops.size())
+	_ok(ids_valid, "every drop is a grass or flower item")
+
+	gf.free()
+	dummy.free()
 
 
 # --- harness ----------------------------------------------------------------

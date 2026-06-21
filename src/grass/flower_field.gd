@@ -9,6 +9,8 @@ extends Node3D
 ## cells it rolls as bloom cells (one shared deterministic pass) and forwards
 ## each scythe swing via `cut_in_arc()`.
 
+signal flower_dropped(world_pos: Vector3)
+
 const ColorUtil := preload("res://src/lib/color_util.gd")
 
 # Flower geometry: a stem, a ring of 4 petals, a center.
@@ -30,6 +32,7 @@ const CUT_HOP_HEIGHT := 0.5
 const REGROW_DELAY := 45.0      # match the grass: long wait...
 const GROW_TIME := 15.0          # ...then grow fully back in over 15s
 const GROW_FROM := 0.05
+const FLOWER_DROP_CHANCE := 0.05   # chance a mown flower yields a flower item
 
 enum { ALIVE, HIDDEN, GROWING }
 
@@ -51,12 +54,14 @@ var _growing: Array = []           # [{i, t}]
 var _wind_axis := WIND_AXIS.normalized()
 var _clock := 0.0
 var _anim_rng := RandomNumberGenerator.new()
+var _drop_rng := RandomNumberGenerator.new()
 
 
 func _init() -> void:
 	# Built in _init (not _ready) so add_flower() works the instant GrassField
 	# adds us and starts planting, without waiting a frame.
 	_anim_rng.seed = 2024
+	_drop_rng.seed = 7777
 	_stem_mesh = BoxMesh.new()
 	_stem_mesh.size = STEM_SIZE
 	_petal_mesh = BoxMesh.new()
@@ -106,6 +111,8 @@ func cut_in_arc(origin: Vector3, forward: Vector3, cut_radius: float, cos_arc: f
 		if dist <= cut_radius and (dist < 0.001 or f.dot(to / dist) >= cos_arc):
 			_state[i] = HIDDEN
 			_cutting.append({"i": i, "t": 0.0, "axis": _random_axis()})
+			if _drop_rng.randf() < FLOWER_DROP_CHANCE:
+				flower_dropped.emit(_flowers[i].global_position)
 			n += 1
 	return n
 

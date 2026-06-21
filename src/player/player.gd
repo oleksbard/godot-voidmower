@@ -13,6 +13,7 @@ extends Node3D
 
 const PlayerRigScript := preload("res://src/player/player_rig.gd")
 const IslandShape := preload("res://src/lib/island_shape.gd")
+const ItemDb := preload("res://src/inventory/item_db.gd")
 
 signal swing(origin: Vector3, forward: Vector3)
 
@@ -41,6 +42,7 @@ var _arm_scythe: Node3D
 var _walk_phase := 0.0
 var _walk_amt := 0.0
 var _swinging := false
+var _can_swing := true
 var _swing_t := 0.0
 
 
@@ -51,6 +53,15 @@ func _ready() -> void:
 	_leg_r = _rig.leg_r
 	_arm_free = _rig.arm_free
 	_arm_scythe = _rig.arm_scythe
+
+
+## Called by Main when the hotbar's active slot changes. The scythe is the only
+## tool with a 3D model and a use, so it shows + swings only when its slot is
+## active; any other (or empty) active slot empties the hands and makes SPACE inert.
+func set_active_tool(item_id: int) -> void:
+	_can_swing = item_id == ItemDb.Id.SCYTHE
+	if _rig != null and _rig.scythe_pivot != null:
+		_rig.scythe_pivot.visible = _can_swing
 
 
 func _input(event: InputEvent) -> void:
@@ -112,7 +123,7 @@ func _animate_walk(delta: float) -> void:
 
 
 func _try_swing() -> void:
-	if _swinging:
+	if _swinging or not _can_swing:
 		return
 	_swinging = true
 	_swing_t = 0.0
