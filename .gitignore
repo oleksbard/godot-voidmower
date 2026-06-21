@@ -22,3 +22,4 @@ mono_crash.*.json
 # OS / editor cruft
 .DS_Store
 *~
+docs/superpowers/*

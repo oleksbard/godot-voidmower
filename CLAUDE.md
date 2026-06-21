@@ -8,9 +8,11 @@ rules — the detail lives in the linked guideline docs under
 ## What this is
 
 A small **Godot 4.7** (Forward+) 3D prototype: a blocky character with a scythe
-mows grass on a procedurally-generated floating island in space. **Everything
-visual is built in GDScript — there are no imported art assets.** The success
-criterion is *feel*, not realism or mechanics depth.
+mows grass on a procedurally-generated floating island in space, under a
+continuous **one-minute day/night cycle** (the sun arcs low across the back
+horizon; an invisible moon orbits and keys the night; one light casts shadows at
+a time). **Everything visual is built in GDScript — there are no imported art
+assets.** The success criterion is *feel*, not realism or mechanics depth.
 
 ## Commands
 
@@ -41,6 +43,11 @@ parse errors and `_ready` runtime errors without opening a window.
 
 If a change forces breaking the procedural / Forward+ / warm-palette setup,
 surface the tradeoff before implementing.
+
+**2D brand art** (mascot, item icons, README) is the one exception — it lives in
+`assets/` and is never loaded into the game. Keep it consistent per
+[`docs/image-direction.md`](docs/image-direction.md); the in-engine procedural rule
+above still stands.
 
 ## Conventions (load-bearing summary)
 
@@ -74,7 +81,8 @@ player's body-assembly split from its controller, the grass moved to a single
 ```
 main.tscn                         # composition-root scene -> src/world/main.gd
 src/
-  world/  main.gd                 # composition root: env, sun, camera, wiring
+  world/  main.gd                 # composition root: env, camera, wiring
+          day_night.gd            # 60s day/night: sun+moon lights, starfield, env animation
           island_builder.gd       # builds the island mesh + surface rocks
   player/ player.gd               # controller: input + movement + animation
           player_rig.gd           # builds the beveled humanoid + scythe; exposes pivots
@@ -93,7 +101,7 @@ Cross-script references load via `preload()` consts (robust on a cold clone / CI
 call-down / signal-up; the composition root is the only place that knows them all.
 
 A headless test suite covers the deterministic core ([P5](docs/refactor-plan.md)
-done — `./test/run_tests.sh`, 20 checks).
+done — `./test/run_tests.sh`, 30 checks).
 
 **Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): only P6
 cleanup (`.gdignore` in `docs/`, dead-code sweep, doc polish).

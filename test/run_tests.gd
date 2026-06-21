@@ -15,6 +15,7 @@ const PlayerScript := preload("res://src/player/player.gd")
 const PlayerRigScript := preload("res://src/player/player_rig.gd")
 const GrassFieldScript := preload("res://src/grass/grass_field.gd")
 const FlowerFieldScript := preload("res://src/grass/flower_field.gd")
+const DayNightScript := preload("res://src/world/day_night.gd")
 
 var _passed := 0
 var _failed := 0
@@ -26,11 +27,13 @@ func _initialize() -> void:
 	_test_island_shape()
 	_test_color_util()
 	_test_mesh_factory()
+	_test_day_night_math()
 	_test_player_edge_clamp()
 	await _test_player_rig()        # in-tree _ready() builds the body
 	await _test_grass_planting()   # need a frame so _ready() fires in-tree
 	await _test_mow_chain()
 	await _test_flower_mow()
+	await _test_day_night_node()
 	print("──")
 	print("%d passed, %d failed" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
@@ -92,6 +95,26 @@ func _test_mesh_factory() -> void:
 
 	_ok(mesh.get_aabb().size.is_equal_approx(Vector3(1.0, 2.0, 0.5)),
 		"beveled_box() AABB matches requested size")
+
+
+# --- DayNight math ----------------------------------------------------------
+
+func _test_day_night_math() -> void:
+	_suite = "DayNight"
+	_ok(is_equal_approx(DayNightScript.phase_at(0.0), DayNightScript.phase_at(DayNightScript.CYCLE_SECONDS)),
+		"phase wraps over CYCLE_SECONDS")
+	_ok(is_equal_approx(DayNightScript.phase_at(DayNightScript.CYCLE_SECONDS * 0.5), 0.5),
+		"phase is 0.5 at half a cycle")
+	_ok(DayNightScript.sun_height(0.25) > 0.0 and DayNightScript.sun_height(0.75) < 0.0,
+		"sun is above the horizon by day and below at night")
+	_ok(DayNightScript.dayness(0.25) > 0.9 and DayNightScript.dayness(0.75) < 0.1,
+		"dayness ~1 at midday and ~0 at deep night")
+	_ok(DayNightScript.sun_casts(0.25) and not DayNightScript.sun_casts(0.75),
+		"sun casts shadows by day, not at night")
+	_ok(is_equal_approx(DayNightScript.clock_hours(0.0), 6.0) and is_equal_approx(DayNightScript.clock_hours(0.25), 12.0),
+		"clock reads 06:00 at dawn and 12:00 at midday")
+	_ok(DayNightScript.day_number(0.0) == 1 and DayNightScript.day_number(DayNightScript.CYCLE_SECONDS) == 2,
+		"day number starts at 1 and ticks up each cycle")
 
 
 # --- Player edge clamp ------------------------------------------------------
@@ -205,6 +228,29 @@ func _test_flower_mow() -> void:
 	_ok(n == 1, "cut_in_arc mows only the bloom inside the arc (got %d)" % n)
 
 	ff.free()
+
+
+# --- DayNight node ----------------------------------------------------------
+
+func _test_day_night_node() -> void:
+	_suite = "DayNight.node"
+	var env := Environment.new()
+	var dn: Node3D = DayNightScript.new()
+	dn.environment = env
+	get_root().add_child(dn)
+	await process_frame                      # _ready() builds lights/stars in-tree
+
+	dn._apply(DayNightScript.phase_at(DayNightScript.CYCLE_SECONDS * 0.25))   # midday
+	_ok(dn._sun.shadow_enabled and not dn._moon.shadow_enabled,
+		"midday: only the sun casts shadows")
+
+	dn._apply(DayNightScript.phase_at(DayNightScript.CYCLE_SECONDS * 0.75))   # deep night
+	_ok(dn._moon.shadow_enabled and not dn._sun.shadow_enabled,
+		"night: only the moon casts shadows")
+	_ok(env.tonemap_exposure > DayNightScript.DAY_EXPOSURE,
+		"night raises exposure above the day value")
+
+	dn.free()
 
 
 # --- harness ----------------------------------------------------------------

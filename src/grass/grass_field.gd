@@ -59,8 +59,8 @@ const CUT_ANIM_TIME := 0.3     # duration of the cute pop before the blade hides
 const CUT_HOP_HEIGHT := 0.5    # how high a cut blade hops during its pop
 
 # Regrow / grow-in
-const REGROW_DELAY := 8.0
-const GROW_TIME := 0.45
+const REGROW_DELAY := 45.0    # wait this long before a mown blade starts regrowing
+const GROW_TIME := 15.0        # then grow fully back in over this many seconds
 const GROW_FROM := 0.05        # seedling Y-scale a regrowing blade starts from
 
 enum { ALIVE, HIDDEN, GROWING }   # per-instance lifecycle
@@ -119,7 +119,7 @@ func _build_multimesh() -> void:
 
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = _mm
-	add_child(mmi)
+	add_child(mmi)                  # casts shadows (default); one directional light at a time keeps it cheap
 
 
 ## One shared material for all blades: a neutral vertical gradient (dark base ->

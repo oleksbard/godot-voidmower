@@ -35,11 +35,13 @@ static func build() -> Node3D:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	# Flat grassy top: fan from centre to the coast ring.
+	# Flat grassy top: fan from centre to the coast ring. ONE uniform colour — a
+	# centre-fan with per-triangle colour variance shows as radial wedge seams
+	# ("lines from the centre"); the grass on top supplies the visual variety.
 	for i in seg:
 		var v0 := IslandShape.ring_vertex(rings[0]["rs"], rings[0]["y"], i, seg)
 		var v1 := IslandShape.ring_vertex(rings[0]["rs"], rings[0]["y"], (i + 1) % seg, seg)
-		_add_tri(st, Vector3.ZERO, v1, v0, ColorUtil.vary(grass_col, rng), Vector3.UP)
+		_add_tri(st, Vector3.ZERO, v1, v0, grass_col, Vector3.UP)
 
 	# Sides: stitch each ring to the next.
 	for k in range(rings.size() - 1):

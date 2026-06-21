@@ -27,8 +27,8 @@ const WIND_FREQ := 1.3
 # Mowing — matches the grass pop so a swing reads as one motion.
 const CUT_ANIM_TIME := 0.3
 const CUT_HOP_HEIGHT := 0.5
-const REGROW_DELAY := 8.0
-const GROW_TIME := 0.45
+const REGROW_DELAY := 45.0      # match the grass: long wait...
+const GROW_TIME := 15.0          # ...then grow fully back in over 15s
 const GROW_FROM := 0.05
 
 enum { ALIVE, HIDDEN, GROWING }
