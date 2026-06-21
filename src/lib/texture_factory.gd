@@ -2,30 +2,6 @@ extends RefCounted
 ## Procedural textures for the crisp, pixelated look — no image assets.
 ## Reference via `const TextureFactory := preload(...)`.
 
-## Flat-coloured pixel-noise texture.
-static func pixel(base: Color, contrast: float, rng_seed: int, size: int = 16) -> ImageTexture:
-	return speckled(base, contrast, base, 0.0, rng_seed, size)
-
-
-## Like pixel(), but sprinkles occasional darker/varied "speck" pixels (pebbles,
-## dirt clumps) for a more natural ground texture.
-static func speckled(base: Color, contrast: float, speck: Color, speck_chance: float, rng_seed: int, size: int = 24) -> ImageTexture:
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = rng_seed
-	for y in size:
-		for x in size:
-			var c: Color
-			if rng.randf() < speck_chance:
-				var s := rng.randf_range(-contrast, contrast)
-				c = Color(clampf(speck.r + s, 0, 1), clampf(speck.g + s, 0, 1), clampf(speck.b + s, 0, 1), 1.0)
-			else:
-				var d := rng.randf_range(-contrast, contrast)
-				c = Color(clampf(base.r + d, 0, 1), clampf(base.g + d, 0, 1), clampf(base.b + d, 0, 1), 1.0)
-			img.set_pixel(x, y, c)
-	return ImageTexture.create_from_image(img)
-
-
 ## Vertical gradient (darker base -> lighter tip) with light noise, for grass.
 static func gradient(bottom: Color, top: Color, rng_seed: int) -> ImageTexture:
 	var w := 4

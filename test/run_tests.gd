@@ -12,7 +12,9 @@ const IslandShape := preload("res://src/lib/island_shape.gd")
 const ColorUtil := preload("res://src/lib/color_util.gd")
 const MeshFactory := preload("res://src/lib/mesh_factory.gd")
 const PlayerScript := preload("res://src/player/player.gd")
+const PlayerRigScript := preload("res://src/player/player_rig.gd")
 const GrassFieldScript := preload("res://src/grass/grass_field.gd")
+const FlowerFieldScript := preload("res://src/grass/flower_field.gd")
 
 var _passed := 0
 var _failed := 0
@@ -25,8 +27,10 @@ func _initialize() -> void:
 	_test_color_util()
 	_test_mesh_factory()
 	_test_player_edge_clamp()
+	await _test_player_rig()        # in-tree _ready() builds the body
 	await _test_grass_planting()   # need a frame so _ready() fires in-tree
 	await _test_mow_chain()
+	await _test_flower_mow()
 	print("──")
 	print("%d passed, %d failed" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
@@ -110,6 +114,31 @@ func _test_player_edge_clamp() -> void:
 	p.free()
 
 
+# --- PlayerRig --------------------------------------------------------------
+
+func _test_player_rig() -> void:
+	_suite = "PlayerRig"
+	var rig: Node3D = PlayerRigScript.new()
+	get_root().add_child(rig)
+	await process_frame         # let rig._ready() build the body in-tree
+
+	var pivots := {
+		"leg_l": rig.leg_l, "leg_r": rig.leg_r, "arm_free": rig.arm_free,
+		"arm_scythe": rig.arm_scythe, "scythe_pivot": rig.scythe_pivot,
+	}
+	var all_present := true
+	for name in pivots:
+		if pivots[name] == null or not (pivots[name] is Node3D):
+			all_present = false
+	_ok(all_present, "exposes all five animatable pivots")
+
+	_ok(rig.get_child_count() > 10, "builds a populated body hierarchy (%d parts)" % rig.get_child_count())
+	_ok(is_equal_approx(rig.arm_scythe.rotation.x, PlayerRigScript.ARM_REST_X),
+		"bakes the scythe arm into its rest pose")
+
+	rig.free()
+
+
 # --- GrassField planting ----------------------------------------------------
 
 func _test_grass_planting() -> void:
@@ -121,13 +150,15 @@ func _test_grass_planting() -> void:
 	get_root().add_child(gf)
 	await process_frame                # let _ready() plant inside the tree
 
-	_ok(gf._blades.size() > 100, "plants a populated field (%d blades)" % gf._blades.size())
+	_ok(gf._count > 100, "plants a populated field (%d blades)" % gf._count)
 	_ok(gf.mowed == 0, "mow count starts at 0")
+	_ok(gf._mm.instance_count == gf._count, "one MultiMesh instance per blade")
 
 	var all_inside := true
-	for b in gf._blades:
-		var ang := atan2(b.position.z, b.position.x)
-		if Vector2(b.position.x, b.position.z).length() > IslandShape.radius(ang) - GrassFieldScript.EDGE_MARGIN + 0.01:
+	for i in gf._count:
+		var bp: Vector3 = gf._base_pos[i]
+		var ang := atan2(bp.z, bp.x)
+		if Vector2(bp.x, bp.z).length() > IslandShape.radius(ang) - GrassFieldScript.EDGE_MARGIN + 0.01:
 			all_inside = false
 	_ok(all_inside, "every planted blade lies inside the coastline")
 
@@ -155,6 +186,25 @@ func _test_mow_chain() -> void:
 
 	gf.free()
 	dummy.free()
+
+
+# --- FlowerField mowing -----------------------------------------------------
+
+func _test_flower_mow() -> void:
+	_suite = "FlowerField"
+	var ff: Node3D = FlowerFieldScript.new()
+	get_root().add_child(ff)
+	await process_frame
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1
+	ff.add_flower(0.5, 0.0, 1.0, rng)    # bloom just in front of the swing
+	ff.add_flower(20.0, 0.0, 1.0, rng)   # bloom well outside the arc
+
+	var cos_arc := cos(deg_to_rad(70.0))
+	var n: int = ff.cut_in_arc(Vector3.ZERO, Vector3(1, 0, 0), 2.2, cos_arc)
+	_ok(n == 1, "cut_in_arc mows only the bloom inside the arc (got %d)" % n)
+
+	ff.free()
 
 
 # --- harness ----------------------------------------------------------------

@@ -49,8 +49,8 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.01, 0.012, 0.03)            # deep space
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.40, 0.46, 0.62)          # cool fill
-	env.ambient_light_energy = 0.45
+	env.ambient_light_color = Color(0.46, 0.52, 0.60)          # cool fill (less blue)
+	env.ambient_light_energy = 0.7                             # keep shadowed ground lit
 
 	# Tone mapping + exposure — the single biggest "feel" lever.
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
@@ -68,11 +68,12 @@ func _build_environment() -> void:
 	env.set_glow_level(4, 1.0)
 	env.set_glow_level(5, 1.0)
 
-	# SSAO grounds objects (grass into soil, player onto ground).
+	# SSAO grounds objects (grass into soil, player onto ground). Kept gentle so
+	# dense grass doesn't crush the ground beneath a mowed patch to black.
 	env.ssao_enabled = true
-	env.ssao_radius = 1.1
-	env.ssao_intensity = 2.5
-	env.ssao_power = 1.5
+	env.ssao_radius = 0.7
+	env.ssao_intensity = 1.1
+	env.ssao_power = 1.0
 
 	var we := WorldEnvironment.new()
 	we.environment = env

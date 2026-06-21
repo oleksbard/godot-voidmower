@@ -66,22 +66,26 @@ Full rules in [`docs/guidelines/`](docs/guidelines/); the essentials:
 
 ## Architecture
 
-Refactor [Phases 1–2](docs/refactor-plan.md) are **done**: feature folders,
-`class_name`, and the shared helpers extracted out of the old `Main` god-object.
+Refactor [Phases 1–5](docs/refactor-plan.md) are **done**: feature folders,
+`class_name`, the shared helpers extracted out of the old `Main` god-object, the
+player's body-assembly split from its controller, the grass moved to a single
+**MultiMesh** (one draw call), and the headless test suite.
 
 ```
 main.tscn                         # composition-root scene -> src/world/main.gd
 src/
   world/  main.gd                 # composition root: env, sun, camera, wiring
           island_builder.gd       # builds the island mesh + surface rocks
-  player/ player.gd               # character build + input + movement/animation
-  grass/  grass_field.gd          # plant/bend/wind/cut/regrow grass + flowers
+  player/ player.gd               # controller: input + movement + animation
+          player_rig.gd           # builds the beveled humanoid + scythe; exposes pivots
+  grass/  grass_field.gd          # MultiMesh grass: plant/bend/wind/cut/regrow
+          flower_field.gd         # rare blooms as real nodes (wind sway, mowable)
   ui/     hud.gd                   # mowed counter
   lib/    color_util.gd           # HSL + roughness variance
           texture_factory.gd      # procedural pixel/speckle/gradient textures
           mesh_factory.gd         # beveled box
           island_shape.gd         # coastline radius() + ring topology (pure)
-test/                             # gdUnit4 suites (Phase 5)
+test/                             # zero-dependency headless runner (Phase 5)
 ```
 
 Cross-script references load via `preload()` consts (robust on a cold clone / CI
@@ -89,7 +93,7 @@ Cross-script references load via `preload()` consts (robust on a cold clone / CI
 call-down / signal-up; the composition root is the only place that knows them all.
 
 A headless test suite covers the deterministic core ([P5](docs/refactor-plan.md)
-done — `./test/run_tests.sh`, 15 checks).
+done — `./test/run_tests.sh`, 20 checks).
 
-**Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): P3 split
-mesh-build from control, **P4 grass → MultiMesh** (the perf phase), P6 cleanup.
+**Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): only P6
+cleanup (`.gdignore` in `docs/`, dead-code sweep, doc polish).

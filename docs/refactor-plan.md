@@ -75,7 +75,7 @@ moves; watch for missed call sites). **Effort:** ~1–2 h.
 
 ---
 
-## Phase 3 — Split responsibilities within features
+## Phase 3 — Split responsibilities within features — ✅ DONE
 
 **Goal:** each script does one job ([code-quality](guidelines/code-quality.md)).
 
@@ -88,14 +88,44 @@ moves; watch for missed call sites). **Effort:** ~1–2 h.
   methods with no cross-talk beyond the blade-state array.
 - Promote remaining magic numbers (mesh offsets/sizes) to named constants.
 
+> **Done.** `PlayerRig` (`src/player/player_rig.gd`, a `Node3D`) builds the body +
+> scythe and bakes the rest pose, exposing the five animatable pivots (`leg_l`,
+> `leg_r`, `arm_free`, `arm_scythe`, `scythe_pivot`); `player.gd` shrank to input,
+> movement, edge clamp, walk/swing animation, and the `swing` signal. The rig is
+> loaded by `preload()` const and typed as `Node3D` (cold-cache-safe, like the
+> rest of the codebase). `GrassField`'s methods were already one-job each, so it
+> kept its single-file shape; its scattered blade/flower mesh literals and the
+> duplicated cut-hop / regrow-seedling numbers were promoted to named constants.
+> A `PlayerRig` test (3 checks) joined the suite — **18 checks, all green.**
+
 **Verify:** headless run exits 0; identical behavior. **Risk:** medium. **Effort:** ~1–2 h.
 
 ---
 
-## Phase 4 — Grass → MultiMesh (the performance phase)
+## Phase 4 — Grass → MultiMesh (the performance phase) — ✅ DONE
 
 **Goal:** the documented win — thousands of blades in **one draw call**.
 ([performance.md](guidelines/performance.md)). Highest risk; do it on its own.
+
+> **Done.** `GrassField` now draws ~2,540 blades from a single `MultiMesh`
+> (`use_colors` + per-instance tint over a shared neutral gradient — one material,
+> one draw call, yet per-blade green variety preserved). Per-blade state lives in
+> parallel arrays (`_base_pos/_base_h/_width/_yaw/_tilt_x/_tilt_z/_wind_phase/
+> _state/_lean`); `_compose(i, lean, height)` bakes each instance transform.
+> **Bend** runs every frame for blades within `BEND_RADIUS`; the **far field**
+> gets a throttled breeze (`WIND_STRIDE` — 1 blade in 4 per frame). **Cut** hides
+> the instance (scale ~0) and spawns a transient flying-blade node that plays the
+> identical hop/tumble/shrink pop, plus the clipping burst; **regrow** scales the
+> instance back in after `REGROW_DELAY`. **Flowers** moved to their own node
+> ([`FlowerField`](../src/grass/flower_field.gd)) — `GrassField` owns the grid and
+> calls `add_flower()` so planting stays one deterministic pass.
+>
+> **One minor, deliberate feel change** (the only departure from "identical
+> behaviour"): flowers no longer bend toward the player (gentle wind sway only).
+> They *are* still mowable — `FlowerField` carries its own cut/pop/regrow and
+> `GrassField.on_swing` forwards the arc via `cut_in_arc()`. Tests grew to **20
+> checks** (grass asserts against the new arrays + `instance_count`; a FlowerField
+> mow check); headless smoke + windowed run both clean.
 
 Design:
 - One `MultiMeshInstance3D` with `instance_count = N`. Per-blade state in
@@ -147,11 +177,18 @@ in the Profiler/Monitor; bend/cut/regrow still feel right in the window.
 
 ---
 
-## Phase 6 — Cleanup
+## Phase 6 — Cleanup — ✅ DONE
 
 - Update `README.md` + `CLAUDE.md` "Architecture" to the new layout.
 - Add `.gdignore` to `docs/`.
 - Delete any dead code surfaced during extraction.
+
+> **Done.** `CLAUDE.md`'s Architecture tree + status reflect the new layout
+> (`player_rig.gd`, `flower_field.gd`, MultiMesh grass, 19 checks); `README.md`
+> needed no change (it has no architecture section). `docs/.gdignore` added so the
+> editor's importer skips the markdown. Dead code removed: `TextureFactory.pixel`
+> + `speckled` (unused — the island uses a noise normal map, only `gradient` /
+> `material` are referenced). No stale flat-root preloads remain.
 
 **Verify:** headless run exits 0; docs match reality.
 

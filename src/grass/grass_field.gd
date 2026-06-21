@@ -1,22 +1,25 @@
 class_name GrassField
 extends Node3D
-## A field of grass blades the player can walk through and mow.
+## A field of grass blades the player can walk through and mow — drawn as a
+## single [MultiMesh] (one draw call for thousands of blades). Per-blade state
+## lives in parallel arrays indexed by instance; the visible transform of each
+## instance is composed on demand from that state.
 ##
-## Each blade is a tall thin box on a pivot anchored at ground level:
-##   - BEND: every frame, blades near the player tilt away from them (stronger
-##           the closer they are) and spring back upright once the player leaves
-##           — so the grass visibly reacts as the character moves through it.
-##   - CUT:  swinging the scythe flags blades in the arc ahead as "busy" and
-##           plays a cute pop (a little hop + tumble-spin + shrink), and fires a
-##           burst of grass-clipping particles.
-##   - REGROW: cut blades grow back in from the ground after REGROW_DELAY.
-## Tilt lives on the pivot's rotation; height/grow lives on the pivot's Y scale,
-## so the two never fight each other. A per-blade "busy" flag keeps the bend
-## loop from touching blades mid-cut or mid-regrow.
+##   - BEND/WIND: each frame, blades near the player tilt away from them (stronger
+##           the closer they are); the rest get a cheap, throttled ambient breeze.
+##   - CUT:  swinging the scythe hides the instances in the arc ahead (scaled to
+##           ~0) and spawns a transient "flying blade" node per cut that plays the
+##           cute pop (a little hop + tumble-spin + shrink), plus a burst of
+##           grass-clipping particles.
+##   - REGROW: cut instances grow back in from the ground after REGROW_DELAY.
+##
+## Flowers are separate real nodes — see [FlowerField], which this field owns and
+## populates during planting (one shared deterministic grid pass).
 
 const TextureFactory := preload("res://src/lib/texture_factory.gd")
 const ColorUtil := preload("res://src/lib/color_util.gd")
 const IslandShape := preload("res://src/lib/island_shape.gd")
+const FlowerFieldScript := preload("res://src/grass/flower_field.gd")
 
 signal mowed_changed(count: int)
 
@@ -35,6 +38,9 @@ const MAX_WIDTH := 1.45
 const MAX_TILT := deg_to_rad(16.0)   # natural lean baked per blade
 const FLOWER_CHANCE := 0.025         # rare blooms scattered among the grass
 
+# Blade geometry
+const BLADE_SIZE := Vector3(0.07, 0.6, 0.07)
+
 # Bending
 const BEND_RADIUS := 2.4
 const MAX_LEAN := deg_to_rad(60.0)
@@ -44,82 +50,94 @@ const SPRING := 8.0            # how fast blades settle toward their target tilt
 const WIND_AXIS := Vector3(0.4, 0.0, 1.0)
 const WIND_AMP := deg_to_rad(7.0)
 const WIND_FREQ := 1.6
+const WIND_STRIDE := 4         # far/wind-only blades refresh 1 frame in N
 
 # Cutting
 const CUT_RADIUS := 2.2
 const ARC_HALF_DEG := 70.0     # half-width of the swing arc in front of player
 const CUT_ANIM_TIME := 0.3     # duration of the cute pop before the blade hides
+const CUT_HOP_HEIGHT := 0.5    # how high a cut blade hops during its pop
 
 # Regrow / grow-in
 const REGROW_DELAY := 8.0
 const GROW_TIME := 0.45
+const GROW_FROM := 0.05        # seedling Y-scale a regrowing blade starts from
 
-var _blades: Array[Node3D] = []
-var _regrow_queue: Array = []  # [{node, at}]
-var _growing: Array = []       # [{node, t}]
-var _cutting: Array = []       # [{node, t, axis}]
-var _clock := 0.0
+enum { ALIVE, HIDDEN, GROWING }   # per-instance lifecycle
+
+# Per-blade state, parallel arrays indexed by MultiMesh instance.
+var _count := 0
+var _base_pos := PackedVector3Array()    # ground position (x, 0, z)
+var _base_h := PackedFloat32Array()       # full-grown height scale
+var _width := PackedFloat32Array()        # thickness scale
+var _yaw := PackedFloat32Array()          # facing
+var _tilt_x := PackedFloat32Array()       # baked natural lean
+var _tilt_z := PackedFloat32Array()
+var _wind_phase := PackedFloat32Array()   # per-blade breeze phase offset
+var _state := PackedInt32Array()          # ALIVE / HIDDEN / GROWING
+var _lean: Array[Quaternion] = []         # current bend/wind tilt (slerped)
+
 var mowed := 0
+var _clock := 0.0
+var _frame := 0
 
-var _blade_mesh: BoxMesh
-var _blade_mats: Array = []     # a pool of slightly varied blade materials
+var _mm: MultiMesh
 var _wind_axis := WIND_AXIS.normalized()
 var _clippings: CPUParticles3D
+var _pop_mesh: BoxMesh
+var _pop_mat: StandardMaterial3D
 var _anim_rng := RandomNumberGenerator.new()
 
-# Shared flower resources (rare blooms)
-var _stem_mesh: BoxMesh
-var _petal_mesh: BoxMesh
-var _center_mesh: BoxMesh
-var _stem_mat: StandardMaterial3D
-var _center_mat: StandardMaterial3D
-var _flower_colors: Array = []
+var _cutting: Array = []        # transient flying-blade pops [{node, t, axis, base_h}]
+var _regrow_queue: Array = []   # [{i, at}]
+var _growing: Array = []        # [{i, t}]
+
+var _flowers: Node3D            # FlowerField (typed as Node3D for cold-cache safety)
 
 
 func _ready() -> void:
 	_anim_rng.seed = 4242
-	_blade_mesh = BoxMesh.new()
-	_blade_mesh.size = Vector3(0.07, 0.6, 0.07)
-
-	# A wider pool of HSL-varied gradients spanning several green tones so the
-	# field doesn't read as one flat color.
-	var grass_bases := [
-		[Color(0.18, 0.40, 0.14), Color(0.42, 0.74, 0.30)],   # standard
-		[Color(0.15, 0.33, 0.12), Color(0.33, 0.60, 0.23)],   # darker
-		[Color(0.24, 0.46, 0.16), Color(0.57, 0.83, 0.35)],   # lighter
-		[Color(0.17, 0.42, 0.21), Color(0.39, 0.78, 0.47)],   # bluish
-		[Color(0.30, 0.45, 0.15), Color(0.63, 0.80, 0.32)],   # yellowish
-	]
-	var mrng := RandomNumberGenerator.new()
-	mrng.seed = 71
-	var idx := 0
-	for pair in grass_bases:
-		for v in 2:
-			var bottom := ColorUtil.vary(pair[0], mrng)
-			var top := ColorUtil.vary(pair[1], mrng)
-			_blade_mats.append(TextureFactory.material(TextureFactory.gradient(bottom, top, 70 + idx), 1.0))
-			idx += 1
-
-	# Flower resources — meshes/mats shared across all blooms; petal colour varies.
-	_stem_mesh = BoxMesh.new()
-	_stem_mesh.size = Vector3(0.05, 0.5, 0.05)
-	_petal_mesh = BoxMesh.new()
-	_petal_mesh.size = Vector3(0.12, 0.06, 0.12)
-	_center_mesh = BoxMesh.new()
-	_center_mesh.size = Vector3(0.12, 0.12, 0.12)
-	_stem_mat = StandardMaterial3D.new()
-	_stem_mat.albedo_color = Color(0.24, 0.46, 0.20)
-	_stem_mat.roughness = 1.0
-	_center_mat = StandardMaterial3D.new()
-	_center_mat.albedo_color = Color(0.95, 0.82, 0.25)
-	_center_mat.roughness = 0.8
-	_flower_colors = [
-		Color(0.86, 0.22, 0.22), Color(0.96, 0.96, 0.92), Color(0.95, 0.52, 0.72),
-		Color(0.62, 0.33, 0.82), Color(0.96, 0.80, 0.24), Color(0.42, 0.52, 0.92),
-	]
-
+	_build_multimesh()
+	_build_pop_resources()
 	_build_clippings()
+	_flowers = FlowerFieldScript.new()
+	add_child(_flowers)
 	_plant_field()
+
+
+# --- build ------------------------------------------------------------------
+
+func _build_multimesh() -> void:
+	var mesh := BoxMesh.new()
+	mesh.size = BLADE_SIZE
+	mesh.material = _blade_material()
+
+	_mm = MultiMesh.new()
+	_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_mm.use_colors = true                  # must be set before instance_count
+	_mm.mesh = mesh
+
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = _mm
+	add_child(mmi)
+
+
+## One shared material for all blades: a neutral vertical gradient (dark base ->
+## light tip) that per-instance COLOR tints to a varied green — so the whole
+## field is one draw call yet no two blades read as the same flat green.
+func _blade_material() -> StandardMaterial3D:
+	var grad := TextureFactory.gradient(Color(0.45, 0.45, 0.45), Color(0.95, 0.95, 0.95), 70)
+	var m := TextureFactory.material(grad, 1.0)
+	m.vertex_color_use_as_albedo = true
+	return m
+
+
+func _build_pop_resources() -> void:
+	_pop_mesh = BoxMesh.new()
+	_pop_mesh.size = BLADE_SIZE
+	_pop_mat = StandardMaterial3D.new()
+	_pop_mat.albedo_color = Color(0.36, 0.66, 0.26)
+	_pop_mat.roughness = 1.0
 
 
 func _build_clippings() -> void:
@@ -157,9 +175,20 @@ func _build_clippings() -> void:
 
 func _plant_field() -> void:
 	# Cover a grid spanning the island's bounding box, but only keep blades that
-	# fall inside the real organic coastline (just inside the cliff edge).
+	# fall inside the real organic coastline (just inside the cliff edge). Rolls
+	# of FLOWER_CHANCE become flowers (handed to the FlowerField); the rest are
+	# grass instances. One rng stream -> one deterministic, non-overlapping pass.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1337
+	var crng := RandomNumberGenerator.new()
+	crng.seed = 71
+	# Green tints (multiply the neutral gradient); spans several grass tones.
+	var palette := [
+		Color(0.42, 0.74, 0.30), Color(0.33, 0.60, 0.23), Color(0.57, 0.83, 0.35),
+		Color(0.39, 0.78, 0.47), Color(0.63, 0.80, 0.32),
+	]
+	var colors: Array[Color] = []
+
 	var limit := IslandShape.BASE * 1.32
 	var x := -limit
 	while x <= limit:
@@ -170,105 +199,77 @@ func _plant_field() -> void:
 			var ang := atan2(pz, px)
 			if Vector2(px, pz).length() <= IslandShape.radius(ang) - EDGE_MARGIN:
 				if rng.randf() < FLOWER_CHANCE:
-					_add_plant(px, pz, rng.randf_range(0.9, 1.1), _make_flower_child(rng))
+					_flowers.add_flower(px, pz, rng.randf_range(0.9, 1.1), rng)
 				else:
-					var mat: Material = _blade_mats[rng.randi() % _blade_mats.size()]
-					var child := _make_grass_child(
-						rng.randf_range(0.0, TAU),                  # facing
-						rng.randf_range(MIN_WIDTH, MAX_WIDTH),       # thickness
-						rng.randf_range(-MAX_TILT, MAX_TILT),        # lean x
-						rng.randf_range(-MAX_TILT, MAX_TILT),        # lean z
-						mat
-					)
-					_add_plant(px, pz, rng.randf_range(MIN_HEIGHT, MAX_HEIGHT), child)
+					_base_pos.append(Vector3(px, 0.0, pz))
+					_base_h.append(rng.randf_range(MIN_HEIGHT, MAX_HEIGHT))
+					_width.append(rng.randf_range(MIN_WIDTH, MAX_WIDTH))
+					_yaw.append(rng.randf_range(0.0, TAU))
+					_tilt_x.append(rng.randf_range(-MAX_TILT, MAX_TILT))
+					_tilt_z.append(rng.randf_range(-MAX_TILT, MAX_TILT))
+					_wind_phase.append(px * 0.6 + pz * 0.45)
+					_state.append(ALIVE)
+					_lean.append(Quaternion.IDENTITY)
+					colors.append(ColorUtil.vary(palette[crng.randi() % palette.size()], crng))
 			z += SPACING
 		x += SPACING
 
-
-## Shared pivot setup for any plant (grass blade or flower). tilt + grow +
-## cut-pop happen on the pivot; the child holds the visual.
-func _add_plant(px: float, pz: float, base_h: float, child: Node3D) -> void:
-	var pivot := Node3D.new()
-	pivot.position = Vector3(px, 0.0, pz)
-	pivot.scale = Vector3(1.0, base_h, 1.0)
-	pivot.set_meta("base_h", base_h)
-	pivot.set_meta("busy", false)
-	pivot.add_child(child)
-	add_child(pivot)
-	_blades.append(pivot)
+	_count = _base_pos.size()
+	_mm.instance_count = _count
+	for i in _count:
+		_mm.set_instance_color(i, colors[i])
+		_mm.set_instance_transform(i, _compose(i, _lean[i], _base_h[i]))
 
 
-func _make_grass_child(yaw: float, width: float, tilt_x: float, tilt_z: float, mat: Material) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()         # lifted so its base sits on the ground
-	mi.mesh = _blade_mesh
-	mi.material_override = mat
-	mi.position = Vector3(0.0, 0.3, 0.0)
-	mi.rotation = Vector3(tilt_x, yaw, tilt_z)
-	mi.scale = Vector3(width, 1.0, width)
-	return mi
+## The full transform of instance `i`: stand a unit blade on the ground at its
+## base, apply the baked lean + facing and the current bend, scaled to width and
+## the given height. Tilt rotates about the base; the lift keeps the base planted.
+func _compose(i: int, lean: Quaternion, height: float) -> Transform3D:
+	var w := _width[i]
+	var basis := Basis(lean) * Basis.from_euler(Vector3(_tilt_x[i], _yaw[i], _tilt_z[i])) * Basis().scaled(Vector3(w, height, w))
+	var origin := _base_pos[i] + basis * Vector3(0.0, BLADE_SIZE.y * 0.5, 0.0)
+	return Transform3D(basis, origin)
 
 
-func _make_flower_child(rng: RandomNumberGenerator) -> Node3D:
-	var g := Node3D.new()
-
-	var stem := MeshInstance3D.new()
-	stem.mesh = _stem_mesh
-	stem.material_override = _stem_mat
-	stem.position = Vector3(0.0, 0.25, 0.0)
-	g.add_child(stem)
-
-	var pmat := StandardMaterial3D.new()
-	pmat.albedo_color = ColorUtil.vary(_flower_colors[rng.randi() % _flower_colors.size()], rng)
-	pmat.roughness = 0.7
-	var hy := 0.54
-	for off in [Vector3(0.12, 0, 0), Vector3(-0.12, 0, 0), Vector3(0, 0, 0.12), Vector3(0, 0, -0.12)]:
-		var petal := MeshInstance3D.new()
-		petal.mesh = _petal_mesh
-		petal.material_override = pmat
-		petal.position = Vector3(off.x, hy, off.z)
-		g.add_child(petal)
-
-	var center := MeshInstance3D.new()
-	center.mesh = _center_mesh
-	center.material_override = _center_mat
-	center.position = Vector3(0.0, hy + 0.02, 0.0)
-	g.add_child(center)
-
-	g.rotation.y = rng.randf_range(0.0, TAU)
-	return g
-
+# --- per-frame --------------------------------------------------------------
 
 func _process(delta: float) -> void:
+	_frame += 1
 	_clock += delta
-	_update_bend(delta)
+	_update_field(delta)
 	_update_cutting(delta)
 	_update_regrow()
 	_update_growth(delta)
 
 
-func _update_bend(delta: float) -> void:
+## Bend blades near the player away from them; everything else gets a throttled
+## ambient breeze (only 1 blade in WIND_STRIDE refreshes per frame — wind is slow
+## enough that the stagger is invisible, and it keeps the per-frame cost down).
+func _update_field(delta: float) -> void:
 	if player == null:
 		return
 	var p := player.global_position
 	p.y = 0.0
 	var w := clampf(delta * SPRING, 0.0, 1.0)
-	for b in _blades:
-		if not b.visible or b.get_meta("busy"):
+	for i in _count:
+		if _state[i] != ALIVE:
 			continue
-		var to := b.global_position - p
+		var to := _base_pos[i] - p
 		to.y = 0.0
 		var dist := to.length()
+		var near := dist > 0.001 and dist < BEND_RADIUS
+		if not near and (i + _frame) % WIND_STRIDE != 0:
+			continue
 		var target: Quaternion
-		if dist > 0.001 and dist < BEND_RADIUS:
+		if near:
 			var push := to / dist                          # horizontal dir away from player
 			var strength := 1.0 - dist / BEND_RADIUS        # 0 at edge, 1 on top of player
 			var axis := Vector3(push.z, 0.0, -push.x).normalized()
 			target = Quaternion(axis, strength * MAX_LEAN)  # tip leans toward `push`
 		else:
-			# Gentle ambient breeze: per-blade phase so the field ripples, not sways as one.
-			var phase := b.position.x * 0.6 + b.position.z * 0.45
-			target = Quaternion(_wind_axis, sin(_clock * WIND_FREQ + phase) * WIND_AMP)
-		b.quaternion = b.quaternion.slerp(target, w)
+			target = Quaternion(_wind_axis, sin(_clock * WIND_FREQ + _wind_phase[i]) * WIND_AMP)
+		_lean[i] = _lean[i].slerp(target, w)
+		_mm.set_instance_transform(i, _compose(i, _lean[i], _base_h[i]))
 
 
 func on_swing(origin: Vector3, forward: Vector3) -> void:
@@ -280,24 +281,59 @@ func on_swing(origin: Vector3, forward: Vector3) -> void:
 	var cos_arc := cos(deg_to_rad(ARC_HALF_DEG))
 	var newly := 0
 	var sum := Vector3.ZERO
-	for b in _blades:
-		if not b.visible or b.get_meta("busy"):
+	for i in _count:
+		if _state[i] != ALIVE:
 			continue
-		var to := b.global_position - origin
+		var to := _base_pos[i] - origin
 		to.y = 0.0
 		var dist := to.length()
 		if dist <= CUT_RADIUS and (dist < 0.001 or f.dot(to / dist) >= cos_arc):
-			b.set_meta("busy", true)
-			_cutting.append({"node": b, "t": 0.0, "axis": _random_axis()})
-			sum += b.global_position
+			_cut_blade(i)
+			sum += _base_pos[i]
 			newly += 1
-	if newly > 0:
-		mowed += newly
+
+	# Flowers get mowed too (separate nodes, same arc).
+	var flowers_cut := 0
+	if _flowers != null:
+		flowers_cut = _flowers.cut_in_arc(origin, f, CUT_RADIUS, cos_arc)
+
+	var total := newly + flowers_cut
+	if total > 0:
+		mowed += total
 		mowed_changed.emit(mowed)
-		var centroid := sum / float(newly)
+		# Burst at the grass centroid if any grass fell, otherwise at the swing.
+		var centroid := (sum / float(newly)) if newly > 0 else origin
 		_clippings.global_position = Vector3(centroid.x, 0.35, centroid.z)
 		_clippings.restart()
 		_clippings.emitting = true
+
+
+## Hide the instance instantly and hand its pop off to a transient node, then
+## queue the regrow. (A MultiMesh instance can't be tweened like a node, so the
+## cute hop/tumble/shrink rides on a throwaway node that frees itself.)
+func _cut_blade(i: int) -> void:
+	_state[i] = HIDDEN
+	_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ONE * 0.0001), _base_pos[i]))
+	_spawn_pop(i)
+	_regrow_queue.append({"i": i, "at": _clock + REGROW_DELAY})
+
+
+## A throwaway copy of the just-cut blade (pivot + lifted blade child, matching
+## the standing blade's pose) that plays the pop in _update_cutting.
+func _spawn_pop(i: int) -> void:
+	var child := MeshInstance3D.new()
+	child.mesh = _pop_mesh
+	child.material_override = _pop_mat
+	child.position = Vector3(0.0, BLADE_SIZE.y * 0.5, 0.0)
+	child.rotation = Vector3(_tilt_x[i], _yaw[i], _tilt_z[i])
+	child.scale = Vector3(_width[i], 1.0, _width[i])
+
+	var pivot := Node3D.new()
+	pivot.position = _base_pos[i]
+	pivot.scale = Vector3(1.0, _base_h[i], 1.0)
+	pivot.add_child(child)
+	add_child(pivot)
+	_cutting.append({"node": pivot, "t": 0.0, "axis": _random_axis(), "base_h": _base_h[i]})
 
 
 func _update_cutting(delta: float) -> void:
@@ -306,22 +342,16 @@ func _update_cutting(delta: float) -> void:
 	var still: Array = []
 	for c in _cutting:
 		c.t += delta / CUT_ANIM_TIME
-		var b: Node3D = c.node
-		var base_h: float = b.get_meta("base_h")
+		var pivot: Node3D = c.node
+		var base_h: float = c.base_h
 		if c.t >= 1.0:
-			# Pop finished: hide, reset, and queue the regrow.
-			b.visible = false
-			b.position.y = 0.0
-			b.quaternion = Quaternion.IDENTITY
-			b.scale = Vector3(1.0, base_h, 1.0)
-			b.set_meta("busy", false)
-			_regrow_queue.append({"node": b, "at": _clock + REGROW_DELAY})
+			pivot.queue_free()
 		else:
 			var k: float = c.t
 			var fade := 1.0 - k
-			b.scale = Vector3(fade, base_h * fade, fade)   # shrink away
-			b.position.y = sin(k * PI) * 0.5               # little hop
-			b.quaternion = Quaternion(c.axis, k * TAU)     # one cute tumble
+			pivot.scale = Vector3(fade, base_h * fade, fade)   # shrink away
+			pivot.position.y = sin(k * PI) * CUT_HOP_HEIGHT     # little hop
+			pivot.quaternion = Quaternion(c.axis, k * TAU)      # one cute tumble
 			still.append(c)
 	_cutting = still
 
@@ -332,12 +362,11 @@ func _update_regrow() -> void:
 	var still: Array = []
 	for item in _regrow_queue:
 		if _clock >= item.at:
-			var b: Node3D = item.node
-			b.set_meta("busy", true)
-			b.visible = true
-			b.quaternion = Quaternion.IDENTITY
-			b.scale = Vector3(1.0, 0.05, 1.0)
-			_growing.append({"node": b, "t": 0.0})
+			var i: int = item.i
+			_state[i] = GROWING
+			_lean[i] = Quaternion.IDENTITY
+			_growing.append({"i": i, "t": 0.0})
+			_mm.set_instance_transform(i, _compose(i, _lean[i], GROW_FROM))
 		else:
 			still.append(item)
 	_regrow_queue = still
@@ -349,13 +378,12 @@ func _update_growth(delta: float) -> void:
 	var still: Array = []
 	for g in _growing:
 		g.t += delta / GROW_TIME
-		var b: Node3D = g.node
-		var base_h: float = b.get_meta("base_h")
+		var i: int = g.i
 		if g.t >= 1.0:
-			b.scale = Vector3(1.0, base_h, 1.0)
-			b.set_meta("busy", false)
+			_state[i] = ALIVE
+			_mm.set_instance_transform(i, _compose(i, _lean[i], _base_h[i]))
 		else:
-			b.scale = Vector3(1.0, lerpf(0.05, base_h, g.t), 1.0)
+			_mm.set_instance_transform(i, _compose(i, _lean[i], lerpf(GROW_FROM, _base_h[i], g.t)))
 			still.append(g)
 	_growing = still
 

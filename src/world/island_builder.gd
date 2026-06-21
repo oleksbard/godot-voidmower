@@ -17,7 +17,7 @@ static func build() -> Node3D:
 	rng.seed = 909
 	var seg := 60
 
-	var grass_col := Color(0.34, 0.56, 0.25)
+	var grass_col := Color(0.40, 0.64, 0.30)
 	var dirt_col := Color(0.42, 0.29, 0.17)
 	var rock_a := Color(0.37, 0.37, 0.41)
 	var rock_b := Color(0.29, 0.28, 0.31)
