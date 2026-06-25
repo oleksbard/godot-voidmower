@@ -21,6 +21,13 @@ const InventoryScript := preload("res://src/inventory/inventory.gd")
 const HotbarScript := preload("res://src/inventory/hotbar.gd")
 const ItemModelScript := preload("res://src/inventory/item_model.gd")
 const DropFieldScript := preload("res://src/drops/drop_field.gd")
+const VisitScheduleScript := preload("res://src/captain/visit_schedule.gd")
+const ShoreLayoutScript := preload("res://src/lib/shore_layout.gd")
+const StallScript := preload("res://src/captain/stall.gd")
+const CaptainRigScript := preload("res://src/captain/captain_rig.gd")
+const BoatScript := preload("res://src/captain/boat.gd")
+const CaptainScript := preload("res://src/captain/captain.gd")
+const CaptainVisitScript := preload("res://src/captain/captain_visit.gd")
 
 var _passed := 0
 var _failed := 0
@@ -33,6 +40,8 @@ func _initialize() -> void:
 	_test_color_util()
 	_test_mesh_factory()
 	_test_day_night_math()
+	_test_visit_schedule()
+	_test_shore_layout()
 	_test_item_db()
 	_test_inventory()
 	_test_player_edge_clamp()
@@ -46,6 +55,11 @@ func _initialize() -> void:
 	await _test_drop_field()
 	await _test_player_tool_gating()
 	await _test_grass_drops()
+	await _test_stall_build()
+	await _test_captain_rig()
+	await _test_boat()
+	await _test_captain()
+	await _test_captain_visit()
 	print("──")
 	print("%d passed, %d failed" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
@@ -132,6 +146,53 @@ func _test_day_night_math() -> void:
 		"day increments at midnight (phase 0.75), not at dawn")
 
 
+# --- VisitSchedule ----------------------------------------------------------
+
+func _test_visit_schedule() -> void:
+	_suite = "VisitSchedule"
+	_ok(VisitScheduleScript.weekday(1) == 0 and VisitScheduleScript.weekday(2) == 1
+			and VisitScheduleScript.weekday(5) == 4 and VisitScheduleScript.weekday(7) == 6,
+		"day 1=Mon, 2=Tue, 5=Fri, 7=Sun")
+	_ok(VisitScheduleScript.weekday(8) == 0 and VisitScheduleScript.weekday(9) == 1,
+		"the week wraps: day 8=Mon, day 9=Tue")
+	_ok(VisitScheduleScript.weekday_name(2) == "Tue" and VisitScheduleScript.weekday_name(5) == "Fri",
+		"weekday_name maps to short names")
+	_ok(VisitScheduleScript.is_visit_day(2) and VisitScheduleScript.is_visit_day(5)
+			and VisitScheduleScript.is_visit_day(7) and VisitScheduleScript.is_visit_day(9),
+		"Tue/Fri/Sun (and next-week Tue) are visit days")
+	_ok(not VisitScheduleScript.is_visit_day(1) and not VisitScheduleScript.is_visit_day(3)
+			and not VisitScheduleScript.is_visit_day(4) and not VisitScheduleScript.is_visit_day(6),
+		"Mon/Wed/Thu/Sat are not visit days")
+	_ok(VisitScheduleScript.present_at(2, 6.0) and VisitScheduleScript.present_at(2, 18.99),
+		"present on a visit day from 06:00 until just before 19:00")
+	_ok(not VisitScheduleScript.present_at(2, 5.99) and not VisitScheduleScript.present_at(2, 19.0),
+		"not present before 06:00 or at/after 19:00")
+	_ok(not VisitScheduleScript.present_at(3, 12.0),
+		"never present on a non-visit day")
+
+
+# --- ShoreLayout ------------------------------------------------------------
+
+func _test_shore_layout() -> void:
+	_suite = "ShoreLayout"
+	# Far outside the island is clamped onto it.
+	var outside := ShoreLayoutScript.clamp_walkable(Vector3(50.0, 0.0, 30.0), false)
+	var ang := atan2(outside.z, outside.x)
+	var max_r: float = IslandShape.radius(ang) - ShoreLayoutScript.EDGE_MARGIN
+	_ok(Vector2(outside.x, outside.z).length() <= max_r + 0.01,
+		"clamps an outside point onto the island")
+	# The no-go circle: a point inside it is left alone when block is OFF...
+	var center: Vector3 = ShoreLayoutScript.BLOCK_CENTER
+	var inside_block := ShoreLayoutScript.clamp_walkable(center, false)
+	_ok(inside_block.is_equal_approx(center),
+		"with no visit, the stall zone is walkable")
+	# ...and pushed out to the circle's rim when block is ON.
+	var pushed := ShoreLayoutScript.clamp_walkable(center + Vector3(0.2, 0.0, 0.0), true)
+	var dist := Vector2(pushed.x - center.x, pushed.z - center.z).length()
+	_ok(is_equal_approx(dist, ShoreLayoutScript.BLOCK_RADIUS),
+		"during a visit the player is pushed to the rim of the stall+Captain no-go circle")
+
+
 # --- ItemDb -----------------------------------------------------------------
 
 func _test_item_db() -> void:
@@ -188,16 +249,23 @@ func _test_player_edge_clamp() -> void:
 	var p: Node3D = PlayerScript.new()   # not added to tree: _ready/rig not needed
 
 	p.position = Vector3(50.0, 0.0, 30.0)   # far outside the island
-	p._clamp_to_island()
+	p._clamp_to_walkable()
 	var d := Vector2(p.position.x, p.position.z).length()
 	var ang := atan2(p.position.z, p.position.x)
-	var max_r: float = IslandShape.radius(ang) - PlayerScript.EDGE_MARGIN
+	var max_r: float = IslandShape.radius(ang) - ShoreLayoutScript.EDGE_MARGIN
 	_ok(d <= max_r + 0.01, "clamp pulls an outside point onto the island")
 
 	var inside := Vector3(1.0, 0.0, 1.0)
 	p.position = inside
-	p._clamp_to_island()
+	p._clamp_to_walkable()
 	_ok(p.position.is_equal_approx(inside), "clamp leaves an inside point untouched")
+
+	# With a visit active, the player is pushed out of the stall+Captain zone.
+	p.set_visit_block(true)
+	p.position = ShoreLayoutScript.BLOCK_CENTER
+	p._clamp_to_walkable()
+	var bd := Vector2(p.position.x - ShoreLayoutScript.BLOCK_CENTER.x, p.position.z - ShoreLayoutScript.BLOCK_CENTER.z).length()
+	_ok(bd >= ShoreLayoutScript.BLOCK_RADIUS - 0.01, "during a visit the player can't enter the stall+Captain zone")
 	p.free()
 
 
@@ -446,6 +514,98 @@ func _test_grass_drops() -> void:
 
 	gf.free()
 	dummy.free()
+
+
+# --- Stall ------------------------------------------------------------------
+
+func _test_stall_build() -> void:
+	_suite = "Stall"
+	var s := StallScript.build()
+	_ok(_count_meshes(s) > 0, "Stall.build() makes mesh geometry (%d meshes)" % _count_meshes(s))
+	s.free()
+
+
+# --- CaptainRig -------------------------------------------------------------
+
+func _test_captain_rig() -> void:
+	_suite = "CaptainRig"
+	var rig: Node3D = CaptainRigScript.new()
+	get_root().add_child(rig)
+	await process_frame
+	var ok := rig.leg_l != null and rig.leg_r != null and rig.arm_l != null \
+		and rig.arm_r != null and rig.shoulder_sprite != null
+	_ok(ok, "exposes the leg/arm pivots and the shoulder sprite")
+	_ok(_count_meshes(rig) > 10, "builds a populated body (%d meshes)" % _count_meshes(rig))
+	rig.free()
+
+
+# --- Boat -------------------------------------------------------------------
+
+func _test_boat() -> void:
+	_suite = "Boat"
+	var boat: Node3D = BoatScript.new()
+	get_root().add_child(boat)
+	await process_frame
+	_ok(_count_meshes(boat) > 0, "builds the skiff geometry (%d meshes)" % _count_meshes(boat))
+
+	var got := {"arrived": false, "departed": false}
+	boat.arrived.connect(func(): got.arrived = true)
+	boat.departed.connect(func(): got.departed = true)
+
+	boat.sail_in()
+	var start_x := boat.position.x
+	boat._process(0.1)
+	_ok(boat.position.x < start_x, "sail_in glides from the void toward the berth")
+	boat._process(10.0)                    # force the trip to finish
+	_ok(got.arrived and boat.position.is_equal_approx(ShoreLayoutScript.BERTH),
+		"sail_in reaches the berth and emits arrived")
+
+	boat.sail_out()
+	boat._process(10.0)
+	_ok(got.departed and not boat.visible, "sail_out departs and hides the boat")
+	boat.free()
+
+
+# --- harness ----------------------------------------------------------------
+
+# --- Captain ----------------------------------------------------------------
+
+func _test_captain() -> void:
+	_suite = "Captain"
+	var cap: Node3D = CaptainScript.new()
+	get_root().add_child(cap)
+	await process_frame                 # _ready builds + attaches the rig
+	cap.global_position = Vector3.ZERO
+	var done := {"n": 0}
+	cap.path_done.connect(func(): done.n += 1)
+	var path: Array[Vector3] = [Vector3(2.0, 0.0, 0.0)]
+	cap.walk_path(path)
+	for i in 200:
+		cap._process(0.05)
+		if done.n > 0:
+			break
+	_ok(done.n == 1, "walk_path reaches its target and emits path_done")
+	_ok(cap.global_position.distance_to(Vector3(2.0, 0.0, 0.0)) < 0.2, "ends near the target point")
+	cap.free()
+
+
+# --- CaptainVisit -----------------------------------------------------------
+
+func _test_captain_visit() -> void:
+	_suite = "CaptainVisit"
+	var cv: Node3D = CaptainVisitScript.new()
+	get_root().add_child(cv)
+	await process_frame                 # _ready builds dock/stall/boat/captain
+
+	cv.on_time(1, 12.0)                 # first tick, Monday noon: snap to gone
+	_ok(not cv._present and not cv._stall.visible, "Monday noon: Captain absent, stall hidden")
+
+	cv.on_time(2, 6.0)                  # Tuesday 06:00: rising edge
+	_ok(cv._present, "Tuesday 06:00 marks the Captain present")
+
+	cv.on_time(2, 19.0)                 # Tuesday 19:00: falling edge
+	_ok(not cv._present, "Tuesday 19:00 marks the Captain gone")
+	cv.free()
 
 
 # --- harness ----------------------------------------------------------------

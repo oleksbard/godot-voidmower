@@ -27,6 +27,9 @@ func _ready() -> void:
 	_build_day_night(env)
 	add_child(IslandBuilder.build())
 
+	var captain_visit := preload("res://src/captain/captain_visit.gd").new()
+	add_child(captain_visit)
+
 	# preload by path (not bare class_name) so loading doesn't depend on the
 	# editor having built the global class cache — works on a cold clone / CI.
 	player = preload("res://src/player/player.gd").new()
@@ -51,6 +54,8 @@ func _ready() -> void:
 	grass.item_dropped.connect(drops.spawn)
 	drops.collected.connect(hotbar.add_item.bind(1))      # one item per collected token
 	hotbar.active_tool_changed.connect(player.set_active_tool)
+	day_night.time_changed.connect(captain_visit.on_time)
+	captain_visit.presence_changed.connect(player.set_visit_block)
 
 	_build_camera()
 

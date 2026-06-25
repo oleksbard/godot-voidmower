@@ -96,19 +96,32 @@ src/
              hotbar.gd             # bottom hotbar UI: per-slot 3D model viewports + number-key select
              item_model.gd         # builds the procedural low-poly item models (scythe/grass/flower)
   drops/  drop_field.gd            # procedural pickup tokens that fly to the player
+  captain/ visit_schedule.gd       # pure: weekday + Tue/Fri/Sun 06:00-19:00 window
+           stall.gd                # procedural market stall builder
+           boat.gd                 # The Dandelion: skiff + sail-in/out, beaches on shore
+           captain_rig.gd          # Captain body (tricorn, monocle, dusk coat)
+           captain.gd              # Captain controller: ride/walk/idle
+           captain_visit.gd        # orchestrator: schedule -> arrival/departure
   lib/    color_util.gd           # HSL + roughness variance
           texture_factory.gd      # procedural pixel/speckle/gradient textures
           mesh_factory.gd         # beveled box
           island_shape.gd         # coastline radius() + ring topology (pure)
+          shore_layout.gd         # Captain-visit shore geometry: island clamp + stall no-go circle (pure)
 test/                             # zero-dependency headless runner (Phase 5)
 ```
+
+- **Captain's Visit** (`src/captain/`): Captain Goldwake beaches *The Dandelion* on
+  the +X shore (no dock) on **Tue/Fri/Sun**, mans a stall 06:00–19:00, then sails off.
+  Driven by `DayNight.time_changed`; pure `VisitSchedule` (when) + `ShoreLayout`
+  (where — also the player's walkable clamp, which blocks the stall+Captain zone
+  during a visit) keep it decoupled. No trade mechanics yet.
 
 Cross-script references load via `preload()` consts (robust on a cold clone / CI
 — bare `class_name` needs the editor's global class cache). Features communicate
 call-down / signal-up; the composition root is the only place that knows them all.
 
 A headless test suite covers the deterministic core ([P5](docs/refactor-plan.md)
-done — `./test/run_tests.sh`, 57 checks).
+done — `./test/run_tests.sh`, 81 checks).
 
 **Remaining** (see [`docs/refactor-plan.md`](docs/refactor-plan.md)): only P6
 cleanup (`.gdignore` in `docs/`, dead-code sweep, doc polish).

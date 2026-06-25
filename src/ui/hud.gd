@@ -4,19 +4,21 @@ extends CanvasLayer
 ## Uses Godot's built-in font (no asset needed) with a dark outline so it stays
 ## readable over the grass.
 
+const VisitSchedule := preload("res://src/captain/visit_schedule.gd")
+
 var _time_label: Label
 
 
 func _ready() -> void:
 	_time_label = _make_label(28, Vector2(18.0, 12.0))
-	_time_label.text = "Day 1   06:00"
+	_time_label.text = "Day 1 · Mon · 06:00"
 	add_child(_time_label)
 
 
 func set_time(day: int, hour: float) -> void:
 	var h := int(hour)
 	var m := int((hour - float(h)) * 60.0)
-	_time_label.text = "Day %d   %02d:%02d" % [day, h, m]
+	_time_label.text = "Day %d · %s · %02d:%02d" % [day, VisitSchedule.weekday_name(day), h, m]
 
 
 func _make_label(font_size: int, pos: Vector2) -> Label:

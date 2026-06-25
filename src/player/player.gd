@@ -12,14 +12,13 @@ extends Node3D
 ## so the root the camera follows never shakes.
 
 const PlayerRigScript := preload("res://src/player/player_rig.gd")
-const IslandShape := preload("res://src/lib/island_shape.gd")
+const ShoreLayout := preload("res://src/lib/shore_layout.gd")
 const ItemDb := preload("res://src/inventory/item_db.gd")
 
 signal swing(origin: Vector3, forward: Vector3)
 
 const SPEED := 6.0
 const TURN_SPEED := 12.0
-const EDGE_MARGIN := 0.7
 
 # Scythe sweep. The scythe is gripped in the hand, so swinging the arm sweeps
 # the whole scythe — no separate scythe rotation needed.
@@ -44,6 +43,7 @@ var _walk_amt := 0.0
 var _swinging := false
 var _can_swing := true
 var _swing_t := 0.0
+var _visit_block := false
 
 
 func _ready() -> void:
@@ -62,6 +62,12 @@ func set_active_tool(item_id: int) -> void:
 	_can_swing = item_id == ItemDb.Id.SCYTHE
 	if _rig != null and _rig.scythe_pivot != null:
 		_rig.scythe_pivot.visible = _can_swing
+
+
+## Called by Main when the Captain arrives/leaves: blocks the player from walking
+## into the stall + Captain while he is on the island.
+func set_visit_block(active: bool) -> void:
+	_visit_block = active
 
 
 func _input(event: InputEvent) -> void:
@@ -95,19 +101,13 @@ func _handle_movement(delta: float) -> void:
 
 	current_velocity = move * SPEED
 	position += current_velocity * delta
-	_clamp_to_island()
+	_clamp_to_walkable()
 
 
-func _clamp_to_island() -> void:
-	var h := Vector2(position.x, position.z)
-	if h.length() < 0.001:
-		return
-	var ang := atan2(position.z, position.x)
-	var max_r := IslandShape.radius(ang) - EDGE_MARGIN
-	if h.length() > max_r:
-		h = h.normalized() * max_r
-		position.x = h.x
-		position.z = h.y
+## Keep the player on the walkable region (island + dock planks); the dock layout
+## owns the geometry so the dock builder and the Captain's path all agree.
+func _clamp_to_walkable() -> void:
+	position = ShoreLayout.clamp_walkable(position, _visit_block)
 
 
 func _animate_walk(delta: float) -> void:
